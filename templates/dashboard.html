@@ -94,10 +94,7 @@
     <!-- 快速记录按钮（仅登录用户可见） -->
     {% if current_user and current_user.status == 'approved' %}
     <div>
-        <div class="flex items-center justify-between mb-3">
-            <h2 class="text-sm font-medium text-text-secondary">快速记录</h2>
-            <span class="text-xs text-text-muted">⏱️ 计时器按钮点击开始/结束</span>
-        </div>
+        <h2 class="text-sm font-medium text-text-secondary mb-3">快速记录</h2>
         <div id="quick-buttons" class="grid grid-cols-3 md:grid-cols-4 gap-2">
             <p class="text-text-muted text-sm col-span-full text-center py-4">加载中...</p>
         </div>
@@ -117,110 +114,6 @@
         </div>
     </div>
 </div>
-
-<!-- Toast 提示容器 -->
-<div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
-    <div id="toast" class="pointer-events-auto px-5 py-3 rounded-xl text-sm font-medium shadow-lg opacity-0 translate-y-4 transition-all duration-300 bg-text-primary text-white"></div>
-</div>
-{% endblock %}
-
-{% block styles %}
-{{ super() }}
-<style>
-    /* 计时器按钮样式 */
-    .timer-btn {
-        transition: all 0.3s ease;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .timer-btn .btn-label {
-        transition: color 0.3s ease;
-    }
-    
-    .timer-btn .timer-display {
-        font-weight: 700;
-        font-size: 0.8rem;
-        background: rgba(255, 255, 255, 0.2);
-        padding: 1px 10px;
-        border-radius: 6px;
-        margin-top: 2px;
-        font-variant-numeric: tabular-nums;
-        letter-spacing: 0.5px;
-        display: none;
-        color: inherit;
-    }
-    
-    .timer-btn.timer-active {
-        background: #f59e0b !important;
-        border-color: #d97706 !important;
-        color: #000 !important;
-        animation: timer-pulse 1.2s ease-in-out infinite;
-    }
-    
-    .timer-btn.timer-active .btn-label {
-        color: #000 !important;
-    }
-    
-    .timer-btn.timer-active .timer-display {
-        display: inline-block !important;
-        background: rgba(0, 0, 0, 0.15);
-        color: #000 !important;
-    }
-    
-    .timer-btn.timer-active .text-muted {
-        color: #000 !important;
-        opacity: 0.7;
-    }
-    
-    @keyframes timer-pulse {
-        0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
-        50% { transform: scale(1.02); box-shadow: 0 0 20px 8px rgba(245, 158, 11, 0.2); }
-    }
-    
-    /* Toast 样式 */
-    .toast-success {
-        background: #10b981 !important;
-        color: #fff !important;
-    }
-    .toast-error {
-        background: #ef4444 !important;
-        color: #fff !important;
-    }
-    .toast-info {
-        background: #3b82f6 !important;
-        color: #fff !important;
-    }
-    .toast-warning {
-        background: #f59e0b !important;
-        color: #000 !important;
-    }
-    .toast-show {
-        opacity: 1 !important;
-        transform: translateY(0) !important;
-    }
-    
-    /* 快速按钮容器动画 */
-    .quick-btn {
-        transition: all 0.15s ease;
-    }
-    .quick-btn:active:not(.timer-active) {
-        transform: scale(0.95);
-    }
-    
-    /* 暗色主题适配 */
-    .dark .timer-btn.timer-active {
-        background: #f59e0b !important;
-        color: #000 !important;
-    }
-    .dark .timer-btn.timer-active .btn-label {
-        color: #000 !important;
-    }
-    .dark .timer-btn.timer-active .timer-display {
-        background: rgba(0, 0, 0, 0.25);
-        color: #000 !important;
-    }
-</style>
 {% endblock %}
 
 {% block scripts %}
