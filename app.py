@@ -10,11 +10,31 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import csv
 import secrets
 import string
+from functools import wraps
 
 app = Flask(__name__)
 app.config['DATABASE'] = os.path.join(os.path.dirname(__file__), 'data', 'baby.db')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'baby-tracker-secret-key-change-in-prod')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+
+
+# ── Login Required Decorator ───────────────────────────────
+
+def login_required(f):
+    """登录验证装饰器：未登录用户跳转到登录页"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # 检查用户是否已登录且状态为已批准
+        if 'user_id' not in session:
+            return redirect(url_for('login_page'))
+        # 额外检查用户状态
+        db = get_db()
+        user = db.execute("SELECT status FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        if not user or user['status'] != 'approved':
+            session.clear()
+            return redirect(url_for('login_page'))
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 @app.after_request
@@ -472,35 +492,51 @@ def inject_user():
 # ── Page Routes ───────────────────────────────────────────
 
 @app.route('/')
+@login_required
 def dashboard():
     return render_template('dashboard.html')
 
 
 @app.route('/login')
 def login_page():
+    # 如果已登录，跳转到仪表盘
+    if 'user_id' in session:
+        return redirect(url_for('dashboard'))
     return render_template('login.html')
 
 
 @app.route('/register')
 def register_page():
+    # 如果已登录，跳转到仪表盘
+    if 'user_id' in session:
+        return redirect(url_for('dashboard'))
     return render_template('register.html')
 
 
 @app.route('/history')
+@login_required
 def history_page():
     return redirect('/')
 
 
 @app.route('/trends')
+@login_required
 def trends_page():
     return render_template('trends.html')
 
 
 @app.route('/admin')
+@login_required
 def admin_page():
     if not is_admin():
         return redirect('/login')
     return render_template('admin.html')
+
+
+@app.route('/vaccine')
+@login_required
+def vaccine_page():
+    return render_template('vaccine.html', active_page='vaccine')
 
 
 # ── API: Auth ─────────────────────────────────────────────
@@ -583,6 +619,7 @@ def get_me():
 
 
 @app.route('/api/auth/nickname', methods=['PUT'])
+@login_required
 def update_nickname():
     u = current_user()
     if not u:
@@ -602,6 +639,7 @@ def update_nickname():
 # ── API: Quick Buttons ────────────────────────────────────
 
 @app.route('/api/quick-buttons', methods=['GET'])
+@login_required
 def get_quick_buttons():
     db = get_db()
     # 管理员看全部按钮，普通用户只看启用的
@@ -613,6 +651,7 @@ def get_quick_buttons():
 
 
 @app.route('/api/quick-buttons', methods=['POST'])
+@login_required
 def create_quick_button():
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -631,6 +670,7 @@ def create_quick_button():
 
 
 @app.route('/api/quick-buttons/<int:btn_id>', methods=['PUT'])
+@login_required
 def update_quick_button(btn_id):
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -669,6 +709,7 @@ def update_quick_button(btn_id):
 
 
 @app.route('/api/quick-buttons/reorder', methods=['POST'])
+@login_required
 def reorder_quick_buttons():
     """接收按钮 ID 列表，按顺序重新分配 sort_order"""
     if not is_admin():
@@ -683,6 +724,7 @@ def reorder_quick_buttons():
 
 
 @app.route('/api/quick-buttons/<int:btn_id>', methods=['DELETE'])
+@login_required
 def delete_quick_button(btn_id):
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -701,6 +743,7 @@ def delete_quick_button(btn_id):
 # ── API: Quick Record (one-click) ─────────────────────────
 
 @app.route('/api/quick-record/<int:btn_id>', methods=['POST'])
+@login_required
 def quick_record(btn_id):
     if not is_approved():
         return jsonify({'error': '请先登录'}), 401
@@ -735,6 +778,7 @@ def quick_record(btn_id):
 # ── API: Records ──────────────────────────────────────────
 
 @app.route('/api/records/dates', methods=['GET'])
+@login_required
 def get_record_dates():
     db = get_db()
     rows = db.execute("SELECT DISTINCT substr(timestamp, 1, 10) as d FROM records ORDER BY d").fetchall()
@@ -742,6 +786,7 @@ def get_record_dates():
 
 
 @app.route('/api/records/<int:record_id>', methods=['GET'])
+@login_required
 def get_record(record_id):
     db = get_db()
     r = db.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
@@ -751,6 +796,7 @@ def get_record(record_id):
 
 
 @app.route('/api/records', methods=['GET'])
+@login_required
 def get_records():
     db = get_db()
     rec_date = request.args.get('date', date.today().isoformat())
@@ -779,6 +825,7 @@ def get_records():
 
 
 @app.route('/api/records', methods=['POST'])
+@login_required
 def create_record():
     if not is_approved():
         return jsonify({'error': '请先登录'}), 401
@@ -810,6 +857,7 @@ def create_record():
 
 
 @app.route('/api/records/<int:record_id>', methods=['PUT'])
+@login_required
 def update_record(record_id):
     """所有已登录用户均可编辑记录的所有内容"""
     if not is_approved():
@@ -856,6 +904,7 @@ def update_record(record_id):
 
 
 @app.route('/api/records/<int:record_id>', methods=['DELETE'])
+@login_required
 def delete_record(record_id):
     if not is_approved():
         return jsonify({'error': '请先登录'}), 401
@@ -948,6 +997,7 @@ def _today_summary_data(db, target_date=None):
 
 
 @app.route('/api/records/today', methods=['GET'])
+@login_required
 def today_summary():
     target_date = request.args.get('date') or date.today().isoformat()
     db = get_db()
@@ -957,6 +1007,7 @@ def today_summary():
 # ── API: Baby ─────────────────────────────────────────────
 
 @app.route('/api/baby', methods=['GET'])
+@login_required
 def get_baby():
     db = get_db()
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
@@ -966,6 +1017,7 @@ def get_baby():
 
 
 @app.route('/api/baby', methods=['PUT'])
+@login_required
 def update_baby():
     if not is_admin():
         return jsonify({'error': '仅管理员可修改'}), 403
@@ -991,6 +1043,7 @@ def update_baby():
 # ── API: Settings ─────────────────────────────────────────
 
 @app.route('/api/settings', methods=['GET'])
+@login_required
 def get_settings():
     db = get_db()
     rows = db.execute("SELECT key, value FROM settings").fetchall()
@@ -998,6 +1051,7 @@ def get_settings():
 
 
 @app.route('/api/settings', methods=['PUT'])
+@login_required
 def update_settings():
     if not is_admin():
         return jsonify({'error': '仅管理员可修改'}), 403
@@ -1014,6 +1068,7 @@ def update_settings():
 
 
 @app.route('/api/milk-estimate', methods=['GET'])
+@login_required
 def get_milk_estimate():
     db = get_db()
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
@@ -1025,6 +1080,7 @@ def get_milk_estimate():
 # ── API: Users (Admin) ────────────────────────────────────
 
 @app.route('/api/users', methods=['GET'])
+@login_required
 def get_users():
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -1034,6 +1090,7 @@ def get_users():
 
 
 @app.route('/api/users/<int:user_id>/approve', methods=['POST'])
+@login_required
 def approve_user(user_id):
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -1046,6 +1103,7 @@ def approve_user(user_id):
 
 
 @app.route('/api/users/<int:user_id>/reject', methods=['POST'])
+@login_required
 def reject_user(user_id):
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -1058,6 +1116,7 @@ def reject_user(user_id):
 
 
 @app.route('/api/users/<int:user_id>', methods=['DELETE'])
+@login_required
 def delete_user(user_id):
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -1072,6 +1131,7 @@ def delete_user(user_id):
 
 
 @app.route('/api/users/<int:user_id>/password', methods=['PUT'])
+@login_required
 def reset_user_password(user_id):
     """管理员重置用户密码"""
     if not is_admin():
@@ -1092,6 +1152,7 @@ def reset_user_password(user_id):
 
 
 @app.route('/api/users/<int:user_id>/username', methods=['PUT'])
+@login_required
 def update_username(user_id):
     """管理员修改用户登录名"""
     if not is_admin():
@@ -1117,6 +1178,7 @@ def update_username(user_id):
 # ── API: Audit Logs ───────────────────────────────────────
 
 @app.route('/api/audit-logs', methods=['GET'])
+@login_required
 def get_audit_logs():
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -1132,6 +1194,7 @@ def get_audit_logs():
 # ── API: Export ───────────────────────────────────────────
 
 @app.route('/api/export/csv', methods=['GET'])
+@login_required
 def export_csv():
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -1160,6 +1223,7 @@ def export_csv():
 
 
 @app.route('/api/backup/export', methods=['GET'])
+@login_required
 def backup_export():
     """导出完整数据库备份（JSON格式）"""
     if not is_admin():
@@ -1203,6 +1267,7 @@ def backup_export():
 
 
 @app.route('/api/backup/restore', methods=['POST'])
+@login_required
 def backup_restore():
     """从JSON备份恢复数据"""
     if not is_admin():
@@ -1264,6 +1329,7 @@ def backup_restore():
 
 
 @app.route('/api/data/clear', methods=['POST'])
+@login_required
 def clear_data():
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -1279,6 +1345,7 @@ def clear_data():
 
 
 @app.route('/api/stats', methods=['GET'])
+@login_required
 def get_stats():
     db = get_db()
     row = db.execute("""
@@ -1301,6 +1368,7 @@ def get_stats():
 # ── API: Weight Logs ─────────────────────────────────────
 
 @app.route('/api/weight-logs', methods=['GET'])
+@login_required
 def get_weight_logs():
     db = get_db()
     rows = db.execute("SELECT * FROM weight_logs ORDER BY recorded_date DESC").fetchall()
@@ -1308,6 +1376,7 @@ def get_weight_logs():
 
 
 @app.route('/api/weight-logs', methods=['POST'])
+@login_required
 def add_weight_log():
     if not is_approved():
         return jsonify({'error': '请先登录'}), 401
@@ -1327,6 +1396,7 @@ def add_weight_log():
 
 
 @app.route('/api/weight-logs/<int:log_id>', methods=['DELETE'])
+@login_required
 def delete_weight_log(log_id):
     if not is_admin():
         return jsonify({'error': '仅管理员可删除'}), 403
@@ -1338,6 +1408,7 @@ def delete_weight_log(log_id):
 
 
 @app.route('/api/weight-logs/<int:log_id>', methods=['PUT'])
+@login_required
 def update_weight_log(log_id):
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
@@ -1360,6 +1431,7 @@ def update_weight_log(log_id):
 # ── API: Statistics ───────────────────────────────────────
 
 @app.route('/api/stats/trends', methods=['GET'])
+@login_required
 def get_trends():
     """获取趋势统计数据，默认最近14天"""
     days = request.args.get('days', 14, type=int)
@@ -1527,12 +1599,8 @@ HEALTH_FOLLOWUP_SCHEDULE = [
 ]
 
 
-@app.route('/vaccine')
-def vaccine_page():
-    return render_template('vaccine.html', active_page='vaccine')
-
-
 @app.route('/api/vaccine/schedule', methods=['GET'])
+@login_required
 def vaccine_schedule():
     """返回疫苗规划 + 接种状态"""
     db = get_db()
@@ -1655,6 +1723,7 @@ def vaccine_schedule():
 
 
 @app.route('/api/vaccine/record', methods=['POST'])
+@login_required
 def vaccine_record_add():
     """记录疫苗接种"""
     if not is_approved():
@@ -1671,6 +1740,7 @@ def vaccine_record_add():
 
 
 @app.route('/api/vaccine/record', methods=['DELETE'])
+@login_required
 def vaccine_record_delete():
     """删除疫苗接种记录"""
     if not is_approved():
@@ -1685,6 +1755,7 @@ def vaccine_record_delete():
 
 
 @app.route('/api/vaccine/plan-date', methods=['PUT'])
+@login_required
 def update_vaccine_plan_date():
     """修改未接种项目的计划日期"""
     if not is_approved():
@@ -1710,6 +1781,7 @@ def update_vaccine_plan_date():
 
 
 @app.route('/api/vaccine/dates', methods=['GET'])
+@login_required
 def vaccine_dates():
     """返回疫苗日期信息供日历显示：已接种日期(黄点) + 未接种日期(红点) + 逾期日期(黑点)"""
     db = get_db()
@@ -1751,6 +1823,7 @@ def vaccine_dates():
 
 
 @app.route('/api/vaccine/day-records', methods=['GET'])
+@login_required
 def vaccine_day_records():
     """返回某日的疫苗信息（已接种记录+未接种计划）"""
     rec_date = request.args.get('date', date.today().isoformat())
@@ -1803,6 +1876,7 @@ def vaccine_day_records():
 # ── API: Health Follow-up (健康随访) ──────────────────────
 
 @app.route('/api/health/schedule', methods=['GET'])
+@login_required
 def health_schedule():
     """返回健康随访规划 + 完成状态"""
     db = get_db()
@@ -1886,6 +1960,7 @@ def health_schedule():
 
 
 @app.route('/api/health/record', methods=['POST'])
+@login_required
 def health_record_add():
     """记录健康随访完成"""
     if not is_approved():
@@ -1905,6 +1980,7 @@ def health_record_add():
 
 
 @app.route('/api/health/record', methods=['DELETE'])
+@login_required
 def health_record_delete():
     """删除健康随访记录"""
     if not is_approved():
@@ -1920,6 +1996,7 @@ def health_record_delete():
 
 
 @app.route('/api/health/plan-date', methods=['PUT'])
+@login_required
 def update_health_plan_date():
     """修改健康随访计划日期"""
     if not is_approved():
@@ -1938,6 +2015,7 @@ def update_health_plan_date():
 
 
 @app.route('/api/health/dates', methods=['GET'])
+@login_required
 def health_dates():
     """返回健康随访日期供日历显示"""
     db = get_db()
@@ -1983,6 +2061,7 @@ def health_dates():
 
 
 @app.route('/api/health/day-records', methods=['GET'])
+@login_required
 def health_day_records():
     """返回某日的健康随访信息"""
     rec_date = request.args.get('date', date.today().isoformat())
@@ -2027,6 +2106,7 @@ def health_day_records():
 # ── API: Countdown Events (自定义倒数日) ──────────────────
 
 @app.route('/api/countdowns', methods=['GET'])
+@login_required
 def get_countdowns():
     db = get_db()
     rows = db.execute("SELECT * FROM countdown_events ORDER BY target_date").fetchall()
@@ -2044,6 +2124,7 @@ def get_countdowns():
 
 
 @app.route('/api/countdowns', methods=['POST'])
+@login_required
 def add_countdown():
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
@@ -2062,6 +2143,7 @@ def add_countdown():
 
 
 @app.route('/api/countdowns/<int:cid>', methods=['PUT'])
+@login_required
 def update_countdown(cid):
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
@@ -2080,6 +2162,7 @@ def update_countdown(cid):
 
 
 @app.route('/api/countdowns/<int:cid>', methods=['DELETE'])
+@login_required
 def delete_countdown(cid):
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
@@ -2104,6 +2187,7 @@ def _check_ha_api_key():
 
 
 @app.route('/api/ha/api-key', methods=['POST'])
+@login_required
 def generate_ha_api_key():
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -2117,6 +2201,7 @@ def generate_ha_api_key():
 
 
 @app.route('/api/ha/api-key', methods=['GET'])
+@login_required
 def get_ha_api_key():
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
@@ -2124,6 +2209,7 @@ def get_ha_api_key():
     row = db.execute("SELECT value FROM settings WHERE key = 'ha_api_key'").fetchone()
     return jsonify({'api_key': row['value'] if row else ''})
 
+# HA 接口不需要登录验证，使用 API Key 认证
 @app.route('/api/ha/status', methods=['GET'])
 def ha_status():
     target_date = request.args.get('date') or date.today().isoformat()
