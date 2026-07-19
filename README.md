@@ -97,8 +97,8 @@
 version: '3.8'
 services:
   baby-tracker:
-    container_name: baby_tracker
-    image: "ghcr.io/1Neal1/baby_tracker:latest"
+    container_name: baby-tracker
+    image: "ghcr.io/1Neal1/baby-tracker:latest"
     ports:
       - "8964:5000"
     volumes:
