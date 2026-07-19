@@ -1,344 +1,228 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Baby Tracker - 仪表盘</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
-    <style>
-        body {
-            background: #f5f7fa;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            padding-bottom: 80px;
-        }
-        .navbar-brand {
-            font-weight: 700;
-            font-size: 1.3rem;
-        }
-        .navbar-brand i {
-            color: #00e5a0;
-        }
-        .card {
-            border: none;
-            border-radius: 16px;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.06);
-            transition: all 0.2s;
-        }
-        .card:hover {
-            box-shadow: 0 4px 20px rgba(0,0,0,0.10);
-        }
-        .stat-number {
-            font-size: 2.2rem;
-            font-weight: 700;
-            line-height: 1.2;
-            color: #1a1a2e;
-        }
-        .stat-label {
-            font-size: 0.85rem;
-            color: #6c757d;
-            font-weight: 500;
-        }
-        .stat-icon {
-            font-size: 2rem;
-            opacity: 0.3;
-        }
-        .progress {
-            height: 12px;
-            border-radius: 8px;
-            background: #e9ecef;
-        }
-        .progress-bar {
-            background: linear-gradient(90deg, #00e5a0, #00b894);
-            border-radius: 8px;
-            transition: width 0.5s ease;
-        }
-        .quick-btn {
-            border-radius: 12px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            padding: 12px 8px;
-            transition: all 0.2s;
-            border: 2px solid transparent;
-        }
-        .quick-btn:active {
-            transform: scale(0.95);
-        }
-        .quick-btn.btn-primary {
-            background: #fff;
-            color: #1a1a2e;
-            border-color: #e9ecef;
-        }
-        .quick-btn.btn-primary:hover {
-            border-color: #00e5a0;
-            background: #f8fffe;
-        }
-        .quick-btn .btn-label {
-            font-size: 0.85rem;
-        }
-        .quick-btn .text-muted {
-            font-size: 0.7rem;
-        }
-        .date-nav .btn {
-            border-radius: 12px;
-            padding: 8px 16px;
-            font-weight: 500;
-        }
-        .date-nav .btn-outline-secondary {
-            border-color: #e9ecef;
-        }
-        .date-nav .btn-outline-secondary:hover {
-            background: #00e5a0;
-            border-color: #00e5a0;
-            color: #fff;
-        }
-        .recent-list .list-group-item {
-            border: none;
-            padding: 10px 0;
-            border-bottom: 1px solid #f1f3f5;
-            background: transparent;
-        }
-        .recent-list .list-group-item:last-child {
-            border-bottom: none;
-        }
-        .badge-feed { background: #00e5a0; color: #fff; }
-        .badge-excrete { background: #fdcb6e; color: #fff; }
-        .badge-symptom { background: #e17055; color: #fff; }
-        .badge-supplement { background: #74b9ff; color: #fff; }
-        .estimate-detail {
-            font-size: 0.8rem;
-            color: #6c757d;
-            background: #f8f9fa;
-            padding: 6px 12px;
-            border-radius: 8px;
-        }
-        .toast-container {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 9999;
-            pointer-events: none;
-        }
-        .toast-custom {
-            background: #1a1a2e;
-            color: #fff;
-            padding: 12px 24px;
-            border-radius: 12px;
-            font-size: 0.95rem;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.15);
-            opacity: 0;
-            transform: translateY(20px);
-            transition: all 0.3s ease;
-            pointer-events: auto;
-        }
-        .toast-custom.show {
-            opacity: 1;
-            transform: translateY(0);
-        }
-        .toast-custom.success { background: #00b894; }
-        .toast-custom.error { background: #e17055; }
-        .toast-custom.info { background: #0984e3; }
-        .toast-custom.warning { background: #fdcb6e; color: #1a1a2e; }
-        .navbar .dropdown-menu {
-            border-radius: 12px;
-            border: none;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.10);
-        }
-        .navbar .dropdown-item:active {
-            background: #00e5a0;
-        }
-        @media (max-width: 576px) {
-            .stat-number {
-                font-size: 1.6rem;
-            }
-            .card-body {
-                padding: 1rem;
-            }
-            .quick-btn {
-                font-size: 0.8rem;
-                padding: 10px 6px;
-            }
-            .navbar-brand {
-                font-size: 1.1rem;
-            }
-            .date-nav .btn {
-                font-size: 0.85rem;
-                padding: 6px 12px;
-            }
-        }
-    </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% set active_page = 'dashboard' %}
+{% block title %}总览 - Baby Tracker{% endblock %}
 
-    <!-- Toast 提示 -->
-    <div class="toast-container" id="toast-container">
-        <div class="toast-custom" id="toast">消息</div>
-    </div>
-
-    <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top">
-        <div class="container">
-            <a class="navbar-brand" href="/">
-                <i class="bi bi-baby"></i> Baby Tracker
+{% block content %}
+<div class="space-y-5 fade-in pb-20 md:pb-0">
+    <!-- 页头 -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-xl font-semibold">总览</h1>
+            <p class="text-text-muted text-sm mt-0.5 font-mono" id="today-date"></p>
+        </div>
+        <div class="flex items-center gap-2">
+            {% if not current_user %}
+            <a href="/login" class="btn-primary flex items-center gap-2 text-sm">
+                <i data-lucide="log-in" class="w-4 h-4"></i>
+                登录
             </a>
-            <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navMenu">
-                <ul class="navbar-nav ms-auto align-items-lg-center">
-                    <li class="nav-item">
-                        <a class="nav-link active" href="/"><i class="bi bi-grid"></i> 总览</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/trends"><i class="bi bi-graph-up"></i> 趋势</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/vaccine"><i class="bi bi-syringe"></i> 疫苗</a>
-                    </li>
-                    {% if current_user and current_user.role == 'admin' %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="/admin"><i class="bi bi-gear"></i> 管理</a>
-                    </li>
-                    {% endif %}
-                    <li class="nav-item dropdown ms-2">
-                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-person-circle"></i>
-                            <span class="d-none d-md-inline">{{ current_user.nickname or current_user.username }}</span>
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li><span class="dropdown-item-text text-muted small">{{ current_user.username }}</span></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="#" id="logout-btn"><i class="bi bi-box-arrow-right"></i> 退出</a></li>
-                        </ul>
-                    </li>
-                </ul>
-            </div>
+            {% endif %}
         </div>
-    </nav>
-
-    <!-- Main Content -->
-    <div class="container mt-3 mt-md-4">
-
-        <!-- Date Navigation -->
-        <div class="d-flex justify-content-between align-items-center mb-3 date-nav">
-            <button class="btn btn-outline-secondary" id="prev-day">
-                <i class="bi bi-chevron-left"></i>
-            </button>
-            <div class="d-flex align-items-center gap-2">
-                <span class="fw-semibold" id="current-date">--</span>
-                <button class="btn btn-sm btn-outline-success" id="today-btn">今天</button>
-            </div>
-            <button class="btn btn-outline-secondary" id="next-day">
-                <i class="bi bi-chevron-right"></i>
-            </button>
-        </div>
-
-        <!-- Stats Row -->
-        <div class="row g-3 mb-3">
-            <div class="col-6 col-md-3">
-                <div class="card h-100">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <div class="stat-label">🍼 今日奶量</div>
-                                <div class="stat-number" id="feed-ml">0</div>
-                                <small class="text-muted">目标: <span id="feed-target">0</span> ml</small>
-                            </div>
-                            <i class="bi bi-droplet stat-icon"></i>
-                        </div>
-                        <div class="progress mt-2">
-                            <div class="progress-bar" id="feed-progress" style="width:0%">0%</div>
-                        </div>
-                        <div class="d-flex justify-content-between mt-1 small text-muted">
-                            <span>已喂 <span id="feed-count">0</span> 次</span>
-                            <span>还需 <span id="feeds-left">0</span> 次</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-3">
-                <div class="card h-100">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <div class="stat-label">💧 排尿</div>
-                                <div class="stat-number" id="urine-count">0</div>
-                            </div>
-                            <i class="bi bi-water stat-icon"></i>
-                        </div>
-                        <div class="mt-2 text-muted small">
-                            今日排尿次数
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-3">
-                <div class="card h-100">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <div class="stat-label">💩 排便</div>
-                                <div class="stat-number" id="stool-count">0</div>
-                            </div>
-                            <i class="bi bi-emoji-smile stat-icon"></i>
-                        </div>
-                        <div class="mt-2 text-muted small">
-                            今日排便次数
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-3">
-                <div class="card h-100">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <div class="stat-label">⏱️ 上次喂养</div>
-                                <div class="stat-number" id="last-feed" style="font-size:1.2rem;">--</div>
-                            </div>
-                            <i class="bi bi-clock stat-icon"></i>
-                        </div>
-                        <div class="mt-2 text-muted small estimate-detail" id="estimate-detail">
-                            等待数据...
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Quick Buttons -->
-        <div class="card mb-3">
-            <div class="card-header bg-transparent border-0 pt-3 pb-0 d-flex justify-content-between align-items-center">
-                <span class="fw-semibold"><i class="bi bi-lightning-fill text-warning"></i> 快速记录</span>
-                <small class="text-muted">点击计时器按钮开始/结束计时</small>
-            </div>
-            <div class="card-body">
-                <div class="row g-2" id="quick-buttons">
-                    <!-- 由 JavaScript 动态加载 -->
-                    <div class="col-12 text-center text-muted py-3">
-                        <div class="spinner-border spinner-border-sm" role="status"></div> 加载中...
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Recent Records -->
-        <div class="card">
-            <div class="card-header bg-transparent border-0 pt-3 pb-0">
-                <span class="fw-semibold"><i class="bi bi-clock-history"></i> 最近记录</span>
-            </div>
-            <div class="card-body p-0">
-                <ul class="list-group list-group-flush recent-list" id="recent-records">
-                    <li class="list-group-item text-muted text-center py-3">暂无记录</li>
-                </ul>
-            </div>
-        </div>
-
     </div>
 
-    <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
-</body>
-</html>
+    <!-- 未登录提示 -->
+    {% if not current_user %}
+    <div class="card text-center py-4">
+        <p class="text-text-muted text-sm">登录后可快速记录喂养、排泄、症状</p>
+        <a href="/login" class="text-accent text-sm hover:underline mt-1 inline-block">立即登录</a>
+    </div>
+    {% endif %}
+
+    <!-- 奶量进度 + 喂养次数 -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="card flex items-center gap-5">
+            <div class="relative flex-shrink-0">
+                <svg width="110" height="110" id="milk-ring">
+                    <circle cx="55" cy="55" r="46" fill="none" class="ring-bg" stroke-width="6"/>
+                    <circle cx="55" cy="55" r="46" fill="none"
+                            class="progress-ring-circle ring-fill" stroke-width="6" stroke-linecap="round"
+                            stroke-dasharray="289.03" stroke-dashoffset="289.03"/>
+                </svg>
+                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                    <span class="counter-value text-2xl text-accent" id="milk-consumed">0</span>
+                    <span class="text-text-muted text-xs">ml</span>
+                </div>
+            </div>
+            <div class="flex-1 min-w-0">
+                <p class="text-text-secondary text-sm mb-1">今日奶量</p>
+                <p class="text-text-muted text-xs mb-2">目标 <span class="font-mono text-text-secondary" id="milk-target">0</span> ml</p>
+                <div class="flex items-center gap-2 text-xs">
+                    <span class="text-text-muted">剩余</span>
+                    <span class="font-mono text-text-secondary" id="milk-remaining">0</span>
+                    <span class="text-text-muted">ml</span>
+                </div>
+                <p class="text-text-muted text-xs mt-2" id="estimate-detail"></p>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="flex items-center justify-between mb-3">
+                <p class="text-text-secondary text-sm">喂养次数</p>
+                <span class="font-mono text-xs text-text-muted"><span id="feed-count">0</span> / <span id="feed-total">8</span></span>
+            </div>
+            <div class="w-full h-2.5 bg-base rounded-full overflow-hidden mb-3">
+                <div class="progress-bar-fill h-full bg-accent rounded-full" id="feed-progress-bar" style="width: 0%"></div>
+            </div>
+            <div class="grid grid-cols-3 gap-3 text-center">
+                <div>
+                    <p class="counter-value text-lg text-text-primary" id="feeds-left">0</p>
+                    <p class="text-text-muted text-xs">剩余次数</p>
+                </div>
+                <div>
+                    <p class="counter-value text-lg text-blue-400" id="urine-count">0</p>
+                    <p class="text-text-muted text-xs">排尿</p>
+                </div>
+                <div>
+                    <p class="counter-value text-lg text-amber-400" id="stool-count">0</p>
+                    <p class="text-text-muted text-xs">排便</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上次喂养 -->
+    <div class="card flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+            <i data-lucide="clock" class="w-4 h-4 text-blue-400"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+            <p class="text-text-secondary text-sm">上次喂养</p>
+            <p class="font-mono text-sm text-text-primary" id="last-feed-time">暂无记录</p>
+        </div>
+    </div>
+
+    <!-- 快速记录按钮（仅登录用户可见） -->
+    {% if current_user and current_user.status == 'approved' %}
+    <div>
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-medium text-text-secondary">快速记录</h2>
+            <span class="text-xs text-text-muted">⏱️ 计时器按钮点击开始/结束</span>
+        </div>
+        <div id="quick-buttons" class="grid grid-cols-3 md:grid-cols-4 gap-2">
+            <p class="text-text-muted text-sm col-span-full text-center py-4">加载中...</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 最近记录 -->
+    <div>
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-medium text-text-secondary">最近记录</h2>
+            <a href="/vaccine" class="text-xs text-text-muted hover:text-accent transition-colors">全部日程</a>
+        </div>
+        <div class="space-y-2" id="recent-records">
+            <div class="card text-center text-text-muted text-sm py-8">
+                <p>暂无记录</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast 提示容器 -->
+<div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+    <div id="toast" class="pointer-events-auto px-5 py-3 rounded-xl text-sm font-medium shadow-lg opacity-0 translate-y-4 transition-all duration-300 bg-text-primary text-white"></div>
+</div>
+{% endblock %}
+
+{% block styles %}
+{{ super() }}
+<style>
+    /* 计时器按钮样式 */
+    .timer-btn {
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .timer-btn .btn-label {
+        transition: color 0.3s ease;
+    }
+    
+    .timer-btn .timer-display {
+        font-weight: 700;
+        font-size: 0.8rem;
+        background: rgba(255, 255, 255, 0.2);
+        padding: 1px 10px;
+        border-radius: 6px;
+        margin-top: 2px;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.5px;
+        display: none;
+        color: inherit;
+    }
+    
+    .timer-btn.timer-active {
+        background: #f59e0b !important;
+        border-color: #d97706 !important;
+        color: #000 !important;
+        animation: timer-pulse 1.2s ease-in-out infinite;
+    }
+    
+    .timer-btn.timer-active .btn-label {
+        color: #000 !important;
+    }
+    
+    .timer-btn.timer-active .timer-display {
+        display: inline-block !important;
+        background: rgba(0, 0, 0, 0.15);
+        color: #000 !important;
+    }
+    
+    .timer-btn.timer-active .text-muted {
+        color: #000 !important;
+        opacity: 0.7;
+    }
+    
+    @keyframes timer-pulse {
+        0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+        50% { transform: scale(1.02); box-shadow: 0 0 20px 8px rgba(245, 158, 11, 0.2); }
+    }
+    
+    /* Toast 样式 */
+    .toast-success {
+        background: #10b981 !important;
+        color: #fff !important;
+    }
+    .toast-error {
+        background: #ef4444 !important;
+        color: #fff !important;
+    }
+    .toast-info {
+        background: #3b82f6 !important;
+        color: #fff !important;
+    }
+    .toast-warning {
+        background: #f59e0b !important;
+        color: #000 !important;
+    }
+    .toast-show {
+        opacity: 1 !important;
+        transform: translateY(0) !important;
+    }
+    
+    /* 快速按钮容器动画 */
+    .quick-btn {
+        transition: all 0.15s ease;
+    }
+    .quick-btn:active:not(.timer-active) {
+        transform: scale(0.95);
+    }
+    
+    /* 暗色主题适配 */
+    .dark .timer-btn.timer-active {
+        background: #f59e0b !important;
+        color: #000 !important;
+    }
+    .dark .timer-btn.timer-active .btn-label {
+        color: #000 !important;
+    }
+    .dark .timer-btn.timer-active .timer-display {
+        background: rgba(0, 0, 0, 0.25);
+        color: #000 !important;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/dashboard.js" data-page-script></script>
+{% endblock %}
