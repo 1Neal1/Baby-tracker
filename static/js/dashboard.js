@@ -207,7 +207,6 @@ function stopTimerAndRecord(btnId, label) {
     const startTime = state.startTime;
     const endTime = Date.now();
     const durationSeconds = Math.floor((endTime - startTime) / 1000);
-    const durationMinutes = Math.round(durationSeconds / 60);
     
     // 移除计时状态
     setTimerState(btnId, null);
@@ -219,36 +218,31 @@ function stopTimerAndRecord(btnId, label) {
     // 如果时长小于10秒，提示并取消记录
     if (durationSeconds < 10) {
         showToast('计时太短（少于10秒），已取消记录');
-        // 从最近记录中移除计时显示
         clearTimerDisplayFromRecent(btnId);
         return;
     }
     
     // 构建记录数据
-    const now = new Date();
     const startDate = new Date(startTime);
     const timestamp = formatDateTimeForAPI(startDate);
     
-    // 获取按钮类型（从数据库按钮中获取）
-    // 这里我们需要找到对应的按钮信息
     const btnInfo = findButtonInfo(btnId);
     if (!btnInfo) {
         showToast('按钮信息未找到');
         return;
     }
     
-    // 提交记录
-    submitBreastRecord(btnId, label, btnInfo, timestamp, durationMinutes, startDate)
+    // 提交记录 - duration 存储总秒数
+    submitBreastRecord(btnId, label, btnInfo, timestamp, durationSeconds, startDate)
         .then(() => {
-            showToast(`${label} - 记录成功 (${durationMinutes}分钟)`);
-            // 从最近记录中移除计时显示
+            const mins = Math.floor(durationSeconds / 60);
+            const secs = durationSeconds % 60;
+            showToast(`${label} - 记录成功 (${mins}分钟${secs}秒)`);
             clearTimerDisplayFromRecent(btnId);
-            // 刷新总览数据
             refreshDashboard();
         })
         .catch(err => {
             showToast(err.message || '记录失败');
-            // 从最近记录中移除计时显示
             clearTimerDisplayFromRecent(btnId);
         });
 }
@@ -258,14 +252,14 @@ function findButtonInfo(btnId) {
     return dashboardData.quick_buttons.find(b => b.id === btnId) || null;
 }
 
-async function submitBreastRecord(btnId, label, btnInfo, timestamp, durationMinutes, startDate) {
+async function submitBreastRecord(btnId, label, btnInfo, timestamp, durationSeconds, startDate) {
     const recordData = {
         type: btnInfo.type,
         sub_type: btnInfo.sub_type,
         amount: btnInfo.amount || 0,
-        duration: durationMinutes,
+        duration: durationSeconds,
         timestamp: timestamp,
-        note: `母乳计时: ${durationMinutes}分钟`,
+        note: `母乳计时`,
         _date: getLocalDate()
     };
     
@@ -494,7 +488,18 @@ function renderRecentRecords(records) {
 function buildRecordDetail(r) {
     const parts = [];
     if (r.amount) parts.push(`${r.amount}ml`);
-    if (r.duration) parts.push(`${r.duration}分钟`);
+    if (r.duration) {
+        // 将秒数格式化为 "XX分钟XX秒"
+        const mins = Math.floor(r.duration / 60);
+        const secs = r.duration % 60;
+        if (mins > 0 && secs > 0) {
+            parts.push(`${mins}分钟${secs}秒`);
+        } else if (mins > 0) {
+            parts.push(`${mins}分钟`);
+        } else {
+            parts.push(`${secs}秒`);
+        }
+    }
     if (r.temperature) parts.push(`${r.temperature}°C`);
     if (r.color) parts.push(r.color);
     if (r.consistency) parts.push(r.consistency);
