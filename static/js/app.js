@@ -229,7 +229,7 @@ function _showEditModal(r) {
                 <input type="number" id="edit-amount" class="input-field font-mono" value="${esc(r.amount || '')}" min="0">
             </div>
             <div>
-                <label class="text-text-muted text-xs mb-1 block">时长 (分钟)</label>
+                <label class="text-text-muted text-xs mb-1 block">时长</label>
                 <input type="number" id="edit-duration" class="input-field font-mono" value="${esc(r.duration || '')}" min="0">
             </div>
             <div>
