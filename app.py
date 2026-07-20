@@ -3,7 +3,6 @@ import sqlite3
 import hashlib
 import json as json_module
 import threading
-import time
 from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, jsonify, g, send_file, session, redirect, url_for
 from io import StringIO, BytesIO
@@ -25,8 +24,10 @@ def login_required(f):
     """登录验证装饰器：未登录用户跳转到登录页"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # 检查用户是否已登录且状态为已批准
         if 'user_id' not in session:
             return redirect(url_for('login_page'))
+        # 额外检查用户状态
         db = get_db()
         user = db.execute("SELECT status FROM users WHERE id = ?", (session['user_id'],)).fetchone()
         if not user or user['status'] != 'approved':
@@ -174,23 +175,35 @@ def init_db():
         );
     ''')
 
+    # 迁移：babies 表添加 is_premature 列
     try:
         db.execute("ALTER TABLE babies ADD COLUMN is_premature INTEGER DEFAULT 0")
     except Exception:
         pass
 
+    # 默认设置
     db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('custom_daily_target', '')")
     db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('feeds_per_day', '8')")
     db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('reminder_interval_min', '180')")
+    # 奶量估算系数（JSON格式，每个阶段: ml/kg/天）
     default_coeffs = json_module.dumps({
-        'day0': 60, 'day1': 60, 'day2_3': 80, 'day4_7': 100,
-        'day8_14': 120, 'day15_28': 135, 'month1_3': 150,
-        'month4_6': 150, 'month4_6_cap': 900,
-        'month6_12_base': 800, 'month6_12_decay': 30, 'month6_12_min': 600,
-        'year1_plus': 500,
+        'day0': 60,       # 出生当天固定值
+        'day1': 60,       # 日龄1天 ml/kg
+        'day2_3': 80,     # 日龄2-3天
+        'day4_7': 100,    # 日龄4-7天
+        'day8_14': 120,   # 日龄8-14天
+        'day15_28': 135,  # 日龄15-28天
+        'month1_3': 150,  # 1-3月龄
+        'month4_6': 150,  # 4-6月龄(上限900)
+        'month4_6_cap': 900,
+        'month6_12_base': 800,  # 6-12月基础量
+        'month6_12_decay': 30,  # 每月递减
+        'month6_12_min': 600,   # 下限
+        'year1_plus': 500,      # 1岁以上
     }, ensure_ascii=False)
     db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('milk_coefficients', ?)", (default_coeffs,))
 
+    # 默认管理员
     admin_count = db.execute("SELECT COUNT(*) as c FROM users WHERE role='admin'").fetchone()['c']
     if admin_count == 0:
         db.execute(
@@ -198,6 +211,7 @@ def init_db():
             ('admin', generate_password_hash('admin123'), '管理员', )
         )
 
+    # 默认婴儿
     row = db.execute("SELECT COUNT(*) as c FROM babies").fetchone()
     if row['c'] == 0:
         db.execute(
@@ -205,6 +219,7 @@ def init_db():
             ('宝宝', 'male', date.today().isoformat(), 3.0)
         )
 
+    # 默认快速记录按钮
     btn_count = db.execute("SELECT COUNT(*) as c FROM quick_buttons").fetchone()['c']
     if btn_count == 0:
         default_buttons = [
@@ -214,13 +229,12 @@ def init_db():
             ('feed', 'breast_left', '母乳(左)', 0, 4),
             ('feed', 'breast_right', '母乳(右)', 0, 5),
             ('feed', 'water', '喂水', 10, 6),
-            ('timer', 'breast_timer', '⏱️ 母乳计时', 0, 7),
-            ('excrete', 'urine', '排尿', 0, 8),
-            ('excrete', 'stool', '排便', 0, 9),
-            ('excrete', 'both', '尿+便', 0, 10),
-            ('symptom', 'vomit', '吐奶', 0, 11),
-            ('symptom', 'fever', '发热', 0, 12),
-            ('symptom', 'jaundice', '黄疸', 0, 13),
+            ('excrete', 'urine', '排尿', 0, 7),
+            ('excrete', 'stool', '排便', 0, 8),
+            ('excrete', 'both', '尿+便', 0, 9),
+            ('symptom', 'vomit', '吐奶', 0, 10),
+            ('symptom', 'fever', '发热', 0, 11),
+            ('symptom', 'jaundice', '黄疸', 0, 12),
         ]
         for b in default_buttons:
             db.execute(
@@ -228,6 +242,7 @@ def init_db():
             )
 
     db.commit()
+
     _migrate_check_constraints(db)
 
 
@@ -308,6 +323,7 @@ def _migrate_check_constraints(db):
 # ── Audit Log ─────────────────────────────────────────────
 
 def add_log(action, target_type='', target_id=None, detail=''):
+    """记录操作日志"""
     db = get_db()
     u = current_user()
     user_id = u['id'] if u else None
@@ -320,6 +336,7 @@ def add_log(action, target_type='', target_id=None, detail=''):
 
 
 def add_log_ha(action, target_type='', target_id=None, detail=''):
+    """记录 HA 来源的操作日志"""
     db = get_db()
     u = db.execute("SELECT id, nickname, username FROM users WHERE role = 'admin' LIMIT 1").fetchone()
     user_id = u['id'] if u else None
@@ -360,17 +377,13 @@ def is_approved():
     return u and u['status'] == 'approved'
 
 
-# ── Timer States ──────────────────────────────────────────
-
-_timer_states = {}
-
-
 # ── Milk Estimation ───────────────────────────────────────
 
 def estimate_milk(baby, settings_dict):
     custom = settings_dict.get('custom_daily_target', '')
     feeds_per_day = int(settings_dict.get('feeds_per_day', '8'))
 
+    # 解析自定义系数
     default_coeffs = {
         'day0': 60, 'day1': 60, 'day2_3': 80, 'day4_7': 100,
         'day8_14': 120, 'day15_28': 135, 'month1_3': 150,
@@ -486,6 +499,7 @@ def dashboard():
 
 @app.route('/login')
 def login_page():
+    # 如果已登录，跳转到仪表盘
     if 'user_id' in session:
         return redirect(url_for('dashboard'))
     return render_template('login.html')
@@ -493,6 +507,7 @@ def login_page():
 
 @app.route('/register')
 def register_page():
+    # 如果已登录，跳转到仪表盘
     if 'user_id' in session:
         return redirect(url_for('dashboard'))
     return render_template('register.html')
@@ -627,6 +642,7 @@ def update_nickname():
 @login_required
 def get_quick_buttons():
     db = get_db()
+    # 管理员看全部按钮，普通用户只看启用的
     if is_admin():
         rows = db.execute("SELECT * FROM quick_buttons ORDER BY sort_order").fetchall()
     else:
@@ -642,6 +658,7 @@ def create_quick_button():
     data = request.get_json()
     db = get_db()
     sort_order = data.get('sort_order', 0)
+    # 将 >= sort_order 的已有按钮排序值全部 +1，避免冲突
     db.execute("UPDATE quick_buttons SET sort_order = sort_order + 1 WHERE sort_order >= ?", (sort_order,))
     cursor = db.execute(
         "INSERT INTO quick_buttons (type, sub_type, label, amount, sort_order, is_active) VALUES (?, ?, ?, ?, ?, 1)",
@@ -694,6 +711,7 @@ def update_quick_button(btn_id):
 @app.route('/api/quick-buttons/reorder', methods=['POST'])
 @login_required
 def reorder_quick_buttons():
+    """接收按钮 ID 列表，按顺序重新分配 sort_order"""
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
     data = request.get_json()
@@ -711,8 +729,10 @@ def delete_quick_button(btn_id):
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
     db = get_db()
+    # 获取被删按钮的排序值
     deleted = db.execute("SELECT sort_order FROM quick_buttons WHERE id = ?", (btn_id,)).fetchone()
     db.execute("DELETE FROM quick_buttons WHERE id = ?", (btn_id,))
+    # 后面的按钮前移填补空位
     if deleted:
         db.execute("UPDATE quick_buttons SET sort_order = sort_order - 1 WHERE sort_order > ?", (deleted['sort_order'],))
     db.commit()
@@ -720,93 +740,7 @@ def delete_quick_button(btn_id):
     return jsonify({'message': '已删除'})
 
 
-# ── API: Timer Buttons ────────────────────────────────────
-
-@app.route('/api/timer/<int:btn_id>/toggle', methods=['POST'])
-@login_required
-def toggle_timer(btn_id):
-    """切换计时器状态：开始/结束"""
-    if not is_approved():
-        return jsonify({'error': '请先登录'}), 401
-    
-    db = get_db()
-    btn = db.execute("SELECT * FROM quick_buttons WHERE id = ? AND is_active = 1", (btn_id,)).fetchone()
-    if not btn:
-        return jsonify({'error': '按钮不存在'}), 404
-    
-    u = current_user()
-    now = datetime.now()
-    
-    state = _timer_states.get(btn_id, {'is_running': False, 'start_time': None, 'duration_seconds': 0})
-    
-    if not state.get('is_running', False):
-        state['is_running'] = True
-        state['start_time'] = now.timestamp()
-        state['duration_seconds'] = 0
-        _timer_states[btn_id] = state
-        
-        return jsonify({
-            'status': 'started',
-            'message': f'开始计时: {btn["label"]}',
-            'start_time': now.isoformat(),
-            'btn_id': btn_id
-        })
-    else:
-        start_time = state.get('start_time')
-        if start_time:
-            duration = int(now.timestamp() - start_time)
-            duration = max(1, duration)
-        else:
-            duration = 0
-        
-        timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
-        amount = btn['amount'] if btn['amount'] is not None else 0
-        
-        cursor = db.execute(
-            """INSERT INTO records (baby_id, user_id, type, sub_type, amount, duration, timestamp, note)
-               VALUES (1, ?, ?, ?, ?, ?, ?, ?)""",
-            (u['id'], btn['type'], btn['sub_type'], amount, duration, timestamp, f'[计时器] {duration}秒')
-        )
-        db.commit()
-        add_log('计时器记录', 'record', cursor.lastrowid, f"{btn['label']} 时长: {duration}秒 @ {timestamp}")
-        
-        state['is_running'] = False
-        state['start_time'] = None
-        state['duration_seconds'] = duration
-        _timer_states[btn_id] = state
-        
-        summary = _today_summary_data(db, None)
-        summary['message'] = f'计时结束: {duration}秒'
-        summary['duration'] = duration
-        summary['record_id'] = cursor.lastrowid
-        
-        return jsonify(summary), 201
-
-
-@app.route('/api/timer/<int:btn_id>/status', methods=['GET'])
-@login_required
-def get_timer_status(btn_id):
-    """获取计时器当前状态"""
-    state = _timer_states.get(btn_id, {'is_running': False, 'start_time': None, 'duration_seconds': 0})
-    
-    result = {
-        'is_running': state.get('is_running', False),
-        'duration_seconds': state.get('duration_seconds', 0),
-        'btn_id': btn_id
-    }
-    
-    if state.get('is_running') and state.get('start_time'):
-        elapsed = int(time.time() - state['start_time'])
-        result['elapsed_seconds'] = elapsed
-        result['start_time'] = datetime.fromtimestamp(state['start_time']).isoformat()
-    else:
-        result['elapsed_seconds'] = 0
-        result['start_time'] = None
-    
-    return jsonify(result)
-
-
-# ── API: Quick Record ─────────────────────────────────────
+# ── API: Quick Record (one-click) ─────────────────────────
 
 @app.route('/api/quick-record/<int:btn_id>', methods=['POST'])
 @login_required
@@ -820,8 +754,10 @@ def quick_record(btn_id):
         return jsonify({'error': '按钮不存在'}), 404
 
     u = current_user()
+    # 使用前端传来的本地时间，若无则用服务端时间
     data = request.get_json() or {}
     timestamp = data.get('timestamp') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # 前端传来的本地日期，用于概览查询，避免时区差异
     target_date = data.get('date')
 
     cursor = db.execute(
@@ -832,6 +768,7 @@ def quick_record(btn_id):
     db.commit()
     add_log('快速记录', 'record', cursor.lastrowid, f"{btn['label']} @ {timestamp}")
 
+    # 直接返回更新后的今日概览数据，避免前端二次请求
     summary = _today_summary_data(db, target_date)
     summary['message'] = '记录成功'
     summary['record_id'] = cursor.lastrowid
@@ -863,6 +800,7 @@ def get_record(record_id):
 def get_records():
     db = get_db()
     rec_date = request.args.get('date', date.today().isoformat())
+    # 校验日期格式
     try:
         datetime.strptime(rec_date, '%Y-%m-%d')
     except ValueError:
@@ -910,6 +848,7 @@ def create_record():
     db.commit()
     add_log('创建记录', 'record', cursor.lastrowid,
             f"{data['type']}/{data['sub_type']} {data.get('amount','')}ml")
+    # 直接返回更新后的概览数据，避免前端二次请求命中不同 worker 读到旧数据
     target_date = data.get('_date')
     summary = _today_summary_data(db, target_date)
     summary['message'] = '记录成功'
@@ -920,6 +859,7 @@ def create_record():
 @app.route('/api/records/<int:record_id>', methods=['PUT'])
 @login_required
 def update_record(record_id):
+    """所有已登录用户均可编辑记录的所有内容"""
     if not is_approved():
         return jsonify({'error': '请先登录'}), 401
 
@@ -932,7 +872,10 @@ def update_record(record_id):
     if data.get('type') and data['type'] not in ('feed', 'excrete', 'symptom', 'supplement'):
         return jsonify({'error': '无效的记录类型'}), 400
 
+    # 前端传来的本地日期，用于概览查询
     target_date = data.get('_date')
+
+    # 构建变更详情
     changes = []
     fields = ['type', 'sub_type', 'amount', 'duration', 'color', 'consistency', 'temperature', 'note', 'timestamp']
     for f in fields:
@@ -942,6 +885,7 @@ def update_record(record_id):
             if old_val != new_val:
                 changes.append(f"{f}: '{old_val}'->'{new_val}'")
 
+    # 逐字段更新，支持设为空值
     updates = []
     params = []
     for f in fields:
@@ -953,6 +897,7 @@ def update_record(record_id):
         db.execute(f"UPDATE records SET {', '.join(updates)} WHERE id = ?", params)
     db.commit()
     add_log('编辑记录', 'record', record_id, '; '.join(changes) if changes else '无变更')
+    # 直接返回更新后的概览数据，避免前端二次请求命中不同 worker 读到旧数据
     summary = _today_summary_data(db, target_date)
     summary['message'] = '已更新'
     return jsonify(summary)
@@ -973,6 +918,7 @@ def delete_record(record_id):
     db.execute("DELETE FROM records WHERE id = ?", (record_id,))
     db.commit()
     add_log('删除记录', 'record', record_id, detail)
+    # 直接返回更新后的概览数据，避免前端二次请求命中不同 worker 读到旧数据
     target_date = request.args.get('date')
     summary = _today_summary_data(db, target_date)
     summary['message'] = '已删除'
@@ -980,6 +926,7 @@ def delete_record(record_id):
 
 
 def _today_summary_data(db, target_date=None):
+    """提取今日概览数据，供 quick_record 和 today_summary 共用"""
     if target_date is None:
         target_date = date.today().isoformat()
     today_str = target_date if isinstance(target_date, str) else target_date.isoformat()
@@ -1003,6 +950,7 @@ def _today_summary_data(db, target_date=None):
     target_ml = estimate['daily_target_ml']
     remaining_ml = max(0, target_ml - total_feed_ml)
 
+    # 动态计算：根据今日实际平均每次奶量推算预计喂养次数
     if feed_count > 0 and total_feed_ml > 0:
         avg_per_feed = total_feed_ml / feed_count
         dynamic_feeds_per_day = max(feed_count, round(target_ml / avg_per_feed))
@@ -1185,6 +1133,7 @@ def delete_user(user_id):
 @app.route('/api/users/<int:user_id>/password', methods=['PUT'])
 @login_required
 def reset_user_password(user_id):
+    """管理员重置用户密码"""
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
     data = request.get_json()
@@ -1205,6 +1154,7 @@ def reset_user_password(user_id):
 @app.route('/api/users/<int:user_id>/username', methods=['PUT'])
 @login_required
 def update_username(user_id):
+    """管理员修改用户登录名"""
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
     data = request.get_json()
@@ -1252,6 +1202,7 @@ def export_csv():
     rows = db.execute("SELECT * FROM records ORDER BY timestamp DESC").fetchall()
     output = StringIO()
     writer = csv.writer(output)
+    # 中文列名 + 中文类型映射
     type_map = {'feed': '喂养', 'excrete': '排泄', 'symptom': '症状', 'supplement': '补充'}
     sub_map = {
         'breast_left': '母乳(左)', 'breast_right': '母乳(右)', 'formula': '配方奶', 'water': '水',
@@ -1274,6 +1225,7 @@ def export_csv():
 @app.route('/api/backup/export', methods=['GET'])
 @login_required
 def backup_export():
+    """导出完整数据库备份（JSON格式）"""
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
     db = get_db()
@@ -1282,6 +1234,7 @@ def backup_export():
         'exported_at': datetime.now().isoformat(),
         'tables': {}
     }
+    # 导出所有数据表
     table_cols = {
         'babies': ['id', 'name', 'gender', 'birth_date', 'weight', 'is_premature', 'created_at'],
         'records': ['id', 'baby_id', 'user_id', 'type', 'sub_type', 'amount', 'duration', 'color', 'consistency', 'temperature', 'note', 'timestamp', 'created_at'],
@@ -1316,9 +1269,11 @@ def backup_export():
 @app.route('/api/backup/restore', methods=['POST'])
 @login_required
 def backup_restore():
+    """从JSON备份恢复数据"""
     if not is_admin():
         return jsonify({'error': '无权限'}), 403
 
+    # 检查是否有上传文件
     if 'file' not in request.files:
         return jsonify({'error': '请选择备份文件'}), 400
 
@@ -1337,6 +1292,7 @@ def backup_restore():
     db = get_db()
     restored_counts = {}
 
+    # 恢复顺序：先恢复无外键依赖的表
     restore_order = ['babies', 'users', 'settings', 'quick_buttons', 'records', 'weight_logs', 'vaccine_records', 'vaccine_plan_overrides', 'health_followup_records', 'health_followup_overrides', 'countdown_events']
 
     for table in restore_order:
@@ -1348,11 +1304,13 @@ def backup_restore():
         if not rows:
             continue
 
+        # 清空表（按依赖顺序反序删除）
         try:
             db.execute(f"DELETE FROM {table}")
         except Exception:
             continue
 
+        # 插入数据
         placeholders = ','.join(['?'] * len(cols))
         col_str = ','.join(cols)
         count = 0
@@ -1379,6 +1337,7 @@ def clear_data():
     db.execute("DELETE FROM records")
     db.commit()
     add_log('清除数据', 'data', None, '清除所有记录')
+    # 直接返回更新后的概览数据
     target_date = request.args.get('date') or (request.get_json() or {}).get('_date')
     summary = _today_summary_data(db, target_date)
     summary['message'] = '所有记录已清除'
@@ -1429,6 +1388,7 @@ def add_weight_log():
         "INSERT INTO weight_logs (baby_id, weight, recorded_date, note) VALUES (1, ?, ?, ?)",
         (data['weight'], data['recorded_date'], data.get('note', ''))
     )
+    # 同步更新婴儿当前体重
     db.execute("UPDATE babies SET weight = ? WHERE id = 1", (data['weight'],))
     db.commit()
     add_log('记录体重', 'weight_log', cursor.lastrowid, f"{data['weight']}kg @ {data['recorded_date']}")
@@ -1473,6 +1433,7 @@ def update_weight_log(log_id):
 @app.route('/api/stats/trends', methods=['GET'])
 @login_required
 def get_trends():
+    """获取趋势统计数据，默认最近14天"""
     days = request.args.get('days', 14, type=int)
     days = min(days, 90)
     weight_days = request.args.get('weight_days', days, type=int)
@@ -1483,6 +1444,7 @@ def get_trends():
     start_date = today - timedelta(days=days-1)
     weight_start = today - timedelta(days=weight_days-1)
 
+    # 每日喂养量
     feed_daily = db.execute("""
         SELECT date(timestamp) as d,
                COALESCE(SUM(amount), 0) as total_ml,
@@ -1492,6 +1454,7 @@ def get_trends():
         GROUP BY date(timestamp) ORDER BY d
     """, (start_date.isoformat(),)).fetchall()
 
+    # 每日排泄次数
     excrete_daily = db.execute("""
         SELECT date(timestamp) as d,
                SUM(CASE WHEN sub_type IN ('urine','both') THEN 1 ELSE 0 END) as urine_count,
@@ -1501,6 +1464,7 @@ def get_trends():
         GROUP BY date(timestamp) ORDER BY d
     """, (start_date.isoformat(),)).fetchall()
 
+    # 喂养时段分布
     feed_hours = db.execute("""
         SELECT CAST(strftime('%H', timestamp) AS INTEGER) as hour,
                COUNT(*) as count
@@ -1518,18 +1482,21 @@ def get_trends():
         GROUP BY date, hour ORDER BY date, hour
     """, (start_date.isoformat(),)).fetchall()
 
+    # 体重记录（独立时间范围，最大1年）
     weights = db.execute("""
         SELECT id, weight, recorded_date, note FROM weight_logs
         WHERE recorded_date >= ?
         ORDER BY recorded_date
     """, (weight_start.isoformat(),)).fetchall()
 
+    # 获取当前奶量目标
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
     settings_rows = db.execute("SELECT key, value FROM settings").fetchall()
     settings_dict = {r['key']: r['value'] for r in settings_rows}
     estimate = estimate_milk(dict(baby) if baby else None, settings_dict)
     target_ml = estimate['daily_target_ml']
 
+    # 填充空白天
     feed_map = {r['d']: dict(r) for r in feed_daily}
     excrete_map = {r['d']: dict(r) for r in excrete_daily}
 
@@ -1557,38 +1524,59 @@ def get_trends():
 
 # ── Vaccine Schedule (2024 国家免疫规划) ──────────────────
 
+# 国家免疫规划疫苗儿童免疫程序表（2024年版）
+# age_months: 接种月龄（0=出生时, 1=1月龄, ...）
+# dose_index: 第几剂（1-based）
+# 注：自2025年1月1日起，百白破疫苗共接种5剂次
 VACCINE_SCHEDULE = [
+    # 乙肝疫苗 HepB - 出生时/1月龄/6月龄
     {"name": "乙肝疫苗", "short": "HepB", "age_months": 0, "dose_index": 1, "note": "出生24小时内"},
     {"name": "乙肝疫苗", "short": "HepB", "age_months": 1, "dose_index": 2, "note": ""},
     {"name": "乙肝疫苗", "short": "HepB", "age_months": 6, "dose_index": 3, "note": ""},
+    # 卡介苗 BCG - 出生时
     {"name": "卡介苗", "short": "BCG", "age_months": 0, "dose_index": 1, "note": "出生时"},
+    # 脊灰灭活疫苗 IPV - 2月龄/3月龄
     {"name": "脊灰灭活疫苗", "short": "IPV", "age_months": 2, "dose_index": 1, "note": ""},
     {"name": "脊灰灭活疫苗", "short": "IPV", "age_months": 3, "dose_index": 2, "note": ""},
+    # 脊灰减毒活疫苗 bOPV - 4月龄/4岁
     {"name": "脊灰减毒活疫苗", "short": "bOPV", "age_months": 4, "dose_index": 3, "note": ""},
     {"name": "脊灰减毒活疫苗", "short": "bOPV", "age_months": 48, "dose_index": 4, "note": "4岁"},
+    # 百白破疫苗 DTaP - 2025新规：2/4/6月龄+18月龄+6岁（共5剂）
     {"name": "百白破疫苗", "short": "DTaP", "age_months": 2, "dose_index": 1, "note": "2025新规"},
     {"name": "百白破疫苗", "short": "DTaP", "age_months": 4, "dose_index": 2, "note": "2025新规"},
     {"name": "百白破疫苗", "short": "DTaP", "age_months": 6, "dose_index": 3, "note": "2025新规"},
     {"name": "百白破疫苗", "short": "DTaP", "age_months": 18, "dose_index": 4, "note": "18月龄加强"},
     {"name": "百白破疫苗", "short": "DTaP", "age_months": 72, "dose_index": 5, "note": "6岁加强"},
+    # A群流脑多糖疫苗 MPSV-A - 6月龄/9月龄
     {"name": "A群流脑多糖疫苗", "short": "MPSV-A", "age_months": 6, "dose_index": 1, "note": ""},
     {"name": "A群流脑多糖疫苗", "short": "MPSV-A", "age_months": 9, "dose_index": 2, "note": "间隔3月"},
+    # A群C群流脑多糖疫苗 MPSV-AC - 3岁/6岁
     {"name": "A群C群流脑多糖疫苗", "short": "MPSV-AC", "age_months": 36, "dose_index": 1, "note": "3岁"},
     {"name": "A群C群流脑多糖疫苗", "short": "MPSV-AC", "age_months": 72, "dose_index": 2, "note": "6岁"},
+    # 麻腮风疫苗 MMR - 8月龄/18月龄
     {"name": "麻腮风疫苗", "short": "MMR", "age_months": 8, "dose_index": 1, "note": ""},
     {"name": "麻腮风疫苗", "short": "MMR", "age_months": 18, "dose_index": 2, "note": ""},
+    # 乙脑减毒活疫苗 JE-L - 8月龄/2岁
     {"name": "乙脑减毒活疫苗", "short": "JE-L", "age_months": 8, "dose_index": 1, "note": ""},
     {"name": "乙脑减毒活疫苗", "short": "JE-L", "age_months": 24, "dose_index": 2, "note": "2岁"},
+    # 乙脑灭活疫苗 JE-I - 8月龄2剂/2岁/6岁（替代方案）
     {"name": "乙脑灭活疫苗", "short": "JE-I", "age_months": 8, "dose_index": 1, "note": "减毒替代方案"},
     {"name": "乙脑灭活疫苗", "short": "JE-I", "age_months": 8, "dose_index": 2, "note": "间隔7-10天"},
     {"name": "乙脑灭活疫苗", "short": "JE-I", "age_months": 24, "dose_index": 3, "note": "2岁"},
     {"name": "乙脑灭活疫苗", "short": "JE-I", "age_months": 72, "dose_index": 4, "note": "6岁"},
+    # 甲肝减毒活疫苗 HepA-L - 18月龄
     {"name": "甲肝减毒活疫苗", "short": "HepA-L", "age_months": 18, "dose_index": 1, "note": "18月龄"},
+    # 甲肝灭活疫苗 HepA-I - 18月龄/2岁（替代方案）
     {"name": "甲肝灭活疫苗", "short": "HepA-I", "age_months": 18, "dose_index": 1, "note": "减毒替代方案"},
     {"name": "甲肝灭活疫苗", "short": "HepA-I", "age_months": 24, "dose_index": 2, "note": "间隔6月"},
 ]
 
+# ── Health Follow-up Schedule (0-6岁儿童健康随访) ──────────
+# 基于《0-6岁儿童健康随访预约卡》
+# premature_only: True = 仅高危早产儿增加的随访（灰色行）
+# premature_only: False = 非早产儿/低危早产儿的常规随访（白色行）
 HEALTH_FOLLOWUP_SCHEDULE = [
+    # 常规随访（白色行）- 所有儿童
     {"label": "1月龄", "age_months": 1, "premature_only": False, "location": "社区（儿童健康管理建档）"},
     {"label": "3月龄", "age_months": 3, "premature_only": False, "location": "社区、区妇幼、市妇幼"},
     {"label": "6月龄", "age_months": 6, "premature_only": False, "location": "社区、区妇幼、市妇幼"},
@@ -1601,6 +1589,7 @@ HEALTH_FOLLOWUP_SCHEDULE = [
     {"label": "4岁", "age_months": 48, "premature_only": False, "location": "社区"},
     {"label": "5岁", "age_months": 60, "premature_only": False, "location": "社区"},
     {"label": "6岁", "age_months": 72, "premature_only": False, "location": "社区"},
+    # 高危早产儿增加的随访（灰色行）
     {"label": "42天-2月龄", "age_months": 1.4, "premature_only": True, "location": "社区、区妇幼、市妇幼"},
     {"label": "4月龄(早产)", "age_months": 4, "premature_only": True, "location": "社区、区妇幼、市妇幼"},
     {"label": "5月龄(早产)", "age_months": 5, "premature_only": True, "location": "社区、区妇幼、市妇幼"},
@@ -1613,6 +1602,7 @@ HEALTH_FOLLOWUP_SCHEDULE = [
 @app.route('/api/vaccine/schedule', methods=['GET'])
 @login_required
 def vaccine_schedule():
+    """返回疫苗规划 + 接种状态"""
     db = get_db()
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
     if not baby or not baby['birth_date']:
@@ -1627,38 +1617,48 @@ def vaccine_schedule():
     age_days = (today - birth.date()).days
     age_months = age_days / 30.44
 
+    # 获取已接种记录
     records = db.execute("SELECT * FROM vaccine_records ORDER BY vaccinated_date").fetchall()
     record_map = {}
     for r in records:
         record_map[(r['vaccine_name'], r['dose_index'])] = dict(r)
 
+    # 获取自定义计划日期覆盖
     overrides = db.execute("SELECT * FROM vaccine_plan_overrides").fetchall()
     override_map = {}
     for o in overrides:
         override_map[(o['vaccine_name'], o['dose_index'])] = o['custom_due_date']
 
+    # 互斥疫苗：如果已接种灭活则隐藏减毒，反之亦然
+    # 乙脑：减毒(JE-L) vs 灭活(JE-I) 二选一
+    # 甲肝：减毒(HepA-L) vs 灭活(HepA-I) 二选一
     je_done = any(r['vaccine_name'].startswith('乙脑') for r in records)
     hepa_done = any(r['vaccine_name'].startswith('甲肝') for r in records)
     je_inactivated_done = any(r['vaccine_name'] == '乙脑灭活疫苗' for r in records)
     hepa_inactivated_done = any(r['vaccine_name'] == '甲肝灭活疫苗' for r in records)
 
+    # 默认显示减毒版；如果已接种灭活版则显示灭活版隐藏减毒版
     schedule_filtered = []
     for v in VACCINE_SCHEDULE:
+        # 乙脑互斥
         if v['short'] == 'JE-L' and je_inactivated_done:
             continue
         if v['short'] == 'JE-I' and not je_inactivated_done and je_done:
             continue
+        # 甲肝互斥
         if v['short'] == 'HepA-L' and hepa_inactivated_done:
             continue
         if v['short'] == 'HepA-I' and not hepa_inactivated_done and hepa_done:
             continue
         schedule_filtered.append(v)
 
+    # 构建完整计划：标准计划 + 自定义疫苗记录
     schedule = []
     for v in schedule_filtered:
         default_due = (birth + timedelta(days=int(v['age_months'] * 30.44))).strftime('%Y-%m-%d')
         key = (v['name'], v['dose_index'])
         rec = record_map.get(key)
+        # 如果有自定义计划日期且未接种，使用自定义日期
         custom_due = override_map.get(key)
         due_date = custom_due if (custom_due and not rec) else default_due
         entry = {
@@ -1672,8 +1672,10 @@ def vaccine_schedule():
         }
         schedule.append(entry)
 
+    # 添加自定义疫苗记录（不在标准计划中的）
     standard_names = {v['name'] for v in VACCINE_SCHEDULE}
     custom_records = [r for r in records if r['vaccine_name'] not in standard_names]
+    # 按疫苗名分组
     custom_groups = {}
     for r in custom_records:
         if r['vaccine_name'] not in custom_groups:
@@ -1694,6 +1696,7 @@ def vaccine_schedule():
                 'is_custom': True,
             })
 
+    # 概览：last_done = 最后一个已接种；next_upcoming = 所有未接种中最近的一个
     last_done = None
     next_upcoming = None
     for s in schedule:
@@ -1722,6 +1725,7 @@ def vaccine_schedule():
 @app.route('/api/vaccine/record', methods=['POST'])
 @login_required
 def vaccine_record_add():
+    """记录疫苗接种"""
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
     data = request.get_json()
@@ -1738,6 +1742,7 @@ def vaccine_record_add():
 @app.route('/api/vaccine/record', methods=['DELETE'])
 @login_required
 def vaccine_record_delete():
+    """删除疫苗接种记录"""
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
     data = request.get_json()
@@ -1752,6 +1757,7 @@ def vaccine_record_delete():
 @app.route('/api/vaccine/plan-date', methods=['PUT'])
 @login_required
 def update_vaccine_plan_date():
+    """修改未接种项目的计划日期"""
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
     data = request.get_json()
@@ -1763,6 +1769,7 @@ def update_vaccine_plan_date():
     if not custom_due_date:
         return jsonify({'error': '请选择日期'}), 400
     db = get_db()
+    # 检查是否已接种
     rec = db.execute("SELECT 1 FROM vaccine_records WHERE vaccine_name = ? AND dose_index = ?", (vaccine_name, dose_index)).fetchone()
     if rec:
         return jsonify({'error': '已接种的项目不能修改计划日期'}), 400
@@ -1776,6 +1783,7 @@ def update_vaccine_plan_date():
 @app.route('/api/vaccine/dates', methods=['GET'])
 @login_required
 def vaccine_dates():
+    """返回疫苗日期信息供日历显示：已接种日期(黄点) + 未接种日期(红点) + 逾期日期(黑点)"""
     db = get_db()
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
     result = {'vaccinated': [], 'overdue': [], 'upcoming': []}
@@ -1788,14 +1796,18 @@ def vaccine_dates():
         return jsonify(result)
 
     today = date.today()
+
+    # 已接种日期
     records = db.execute("SELECT vaccinated_date FROM vaccine_records").fetchall()
     result['vaccinated'] = [r['vaccinated_date'] for r in records if r['vaccinated_date']]
 
+    # 获取自定义计划日期覆盖
     overrides = db.execute("SELECT * FROM vaccine_plan_overrides").fetchall()
     override_map = {}
     for o in overrides:
         override_map[(o['vaccine_name'], o['dose_index'])] = o['custom_due_date']
 
+    # 未接种：逾期(黑点) + 未到(红点)
     for v in VACCINE_SCHEDULE:
         key = (v['name'], v['dose_index'])
         rec = db.execute("SELECT 1 FROM vaccine_records WHERE vaccine_name = ? AND dose_index = ?", key).fetchone()
@@ -1813,6 +1825,7 @@ def vaccine_dates():
 @app.route('/api/vaccine/day-records', methods=['GET'])
 @login_required
 def vaccine_day_records():
+    """返回某日的疫苗信息（已接种记录+未接种计划）"""
     rec_date = request.args.get('date', date.today().isoformat())
     db = get_db()
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
@@ -1826,6 +1839,8 @@ def vaccine_day_records():
         return jsonify(result)
 
     today = date.today()
+
+    # 已接种记录
     records = db.execute("SELECT * FROM vaccine_records WHERE vaccinated_date = ?", (rec_date,)).fetchall()
     for r in records:
         result['vaccinated'].append({
@@ -1835,6 +1850,7 @@ def vaccine_day_records():
             'note': r['note'] or ''
         })
 
+    # 当日应接种但未接种的
     overrides = db.execute("SELECT * FROM vaccine_plan_overrides").fetchall()
     override_map = {}
     for o in overrides:
@@ -1857,11 +1873,12 @@ def vaccine_day_records():
     return jsonify(result)
 
 
-# ── API: Health Follow-up ──────────────────────────────────
+# ── API: Health Follow-up (健康随访) ──────────────────────
 
 @app.route('/api/health/schedule', methods=['GET'])
 @login_required
 def health_schedule():
+    """返回健康随访规划 + 完成状态"""
     db = get_db()
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
     if not baby or not baby['birth_date']:
@@ -1874,11 +1891,15 @@ def health_schedule():
 
     is_premature = bool(baby['is_premature']) if 'is_premature' in baby.keys() else False
     today = date.today()
+
+    # 根据早产儿类型筛选随访计划
     schedule_list = [s for s in HEALTH_FOLLOWUP_SCHEDULE if not s['premature_only'] or is_premature]
 
+    # 已完成记录
     records = db.execute("SELECT * FROM health_followup_records").fetchall()
     record_map = {r['label']: dict(r) for r in records}
 
+    # 自定义日期覆盖
     overrides = db.execute("SELECT * FROM health_followup_overrides").fetchall()
     override_map = {o['label']: o['custom_due_date'] for o in overrides}
 
@@ -1899,6 +1920,7 @@ def health_schedule():
         }
         schedule.append(entry)
 
+    # 自定义随访记录（不在预定义计划中的已完成记录）
     schedule_labels = {s['label'] for s in schedule_list}
     for r in records:
         if r['label'] not in schedule_labels:
@@ -1916,6 +1938,7 @@ def health_schedule():
                 'is_custom': True,
             })
 
+    # 概览
     next_upcoming = None
     for s in schedule:
         if s['status'] in ('upcoming', 'overdue'):
@@ -1939,6 +1962,7 @@ def health_schedule():
 @app.route('/api/health/record', methods=['POST'])
 @login_required
 def health_record_add():
+    """记录健康随访完成"""
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
     data = request.get_json()
@@ -1958,6 +1982,7 @@ def health_record_add():
 @app.route('/api/health/record', methods=['DELETE'])
 @login_required
 def health_record_delete():
+    """删除健康随访记录"""
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
     label = request.args.get('label', '').strip()
@@ -1973,6 +1998,7 @@ def health_record_delete():
 @app.route('/api/health/plan-date', methods=['PUT'])
 @login_required
 def update_health_plan_date():
+    """修改健康随访计划日期"""
     if not is_approved():
         return jsonify({'error': '无权限'}), 403
     data = request.get_json()
@@ -1991,6 +2017,7 @@ def update_health_plan_date():
 @app.route('/api/health/dates', methods=['GET'])
 @login_required
 def health_dates():
+    """返回健康随访日期供日历显示"""
     db = get_db()
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
     result = {'completed': [], 'upcoming': [], 'overdue': []}
@@ -2024,6 +2051,7 @@ def health_dates():
             else:
                 result['upcoming'].append(due_date)
 
+    # 自定义随访记录（不在预定义计划中的）
     schedule_labels = {s['label'] for s in schedule_list}
     for r in records:
         if r['label'] not in schedule_labels:
@@ -2035,6 +2063,7 @@ def health_dates():
 @app.route('/api/health/day-records', methods=['GET'])
 @login_required
 def health_day_records():
+    """返回某日的健康随访信息"""
     rec_date = request.args.get('date', date.today().isoformat())
     db = get_db()
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
@@ -2074,7 +2103,7 @@ def health_day_records():
     return jsonify(result)
 
 
-# ── API: Countdown Events ──────────────────────────────────
+# ── API: Countdown Events (自定义倒数日) ──────────────────
 
 @app.route('/api/countdowns', methods=['GET'])
 @login_required
@@ -2180,7 +2209,7 @@ def get_ha_api_key():
     row = db.execute("SELECT value FROM settings WHERE key = 'ha_api_key'").fetchone()
     return jsonify({'api_key': row['value'] if row else ''})
 
-
+# HA 接口不需要登录验证，使用 API Key 认证
 @app.route('/api/ha/status', methods=['GET'])
 def ha_status():
     target_date = request.args.get('date') or date.today().isoformat()
@@ -2233,6 +2262,7 @@ def ha_excrete_today():
 
 # ── HA 快速按钮开关 ──────────────────────────────────────
 
+# 按钮开关状态：{btn_id: 'on'/'off'}，按下后保持 on 2秒再回弹
 _ha_button_states = {}
 _ha_button_timers = {}
 
@@ -2245,11 +2275,13 @@ ICON_MAP = {
 
 
 def _ha_btn_off(btn_id):
+    """2秒后自动将按钮状态设为 off"""
     _ha_button_states[btn_id] = 'off'
 
 
 @app.route('/api/ha/buttons', methods=['GET'])
 def ha_buttons():
+    """返回所有启用的快速按钮，供 HA 创建 REST 开关实体"""
     db = get_db()
     buttons = db.execute("SELECT * FROM quick_buttons WHERE is_active = 1 ORDER BY sort_order").fetchall()
     result = []
@@ -2268,6 +2300,7 @@ def ha_buttons():
 
 @app.route('/api/ha/button/<int:btn_id>', methods=['GET', 'POST'])
 def ha_button_state(btn_id):
+    """HA 按钮端点：GET 查询状态，POST 触发记录"""
     if request.method == 'POST':
         return _ha_do_press(btn_id)
     db = get_db()
@@ -2288,10 +2321,12 @@ def ha_button_state(btn_id):
 
 @app.route('/api/ha/button/<int:btn_id>/press', methods=['POST'])
 def ha_button_press(btn_id):
+    """HA 开关备用端点：触发记录"""
     return _ha_do_press(btn_id)
 
 
 def _ha_do_press(btn_id):
+    """HA 快速记录核心逻辑"""
     if not _check_ha_api_key():
         return jsonify({'error': '未授权，请提供有效的 API 密钥'}), 401
 
@@ -2342,6 +2377,7 @@ def _ha_do_press(btn_id):
 
 @app.route('/static/icons/icon-<size>.png')
 def pwa_icon(size):
+    """动态生成 PWA 图标 - 无边框全出血设计"""
     try:
         size = int(size)
     except ValueError:
@@ -2350,14 +2386,17 @@ def pwa_icon(size):
 
     from PIL import Image, ImageDraw
 
-    bg_color = (0, 229, 160, 255)
+    # 无边框：背景直接填满，无 margin
+    bg_color = (0, 229, 160, 255)  # accent color #00e5a0
     img = Image.new('RGBA', (size, size), bg_color)
     draw = ImageDraw.Draw(img)
 
+    # 奶瓶图标 - 居中偏上
     cx = size // 2
     cy = int(size * 0.48)
     unit = size / 100
 
+    # 瓶身
     bottle_left = cx - 16 * unit
     bottle_right = cx + 16 * unit
     bottle_top = cy - 22 * unit
@@ -2366,12 +2405,16 @@ def pwa_icon(size):
     neck_right = cx + 8 * unit
     neck_top = cy - 32 * unit
 
+    # 瓶颈
     draw.rectangle([neck_left, neck_top, neck_right, bottle_top], fill='white')
+    # 瓶身
     draw.rounded_rectangle([bottle_left, bottle_top, bottle_right, bottle_bottom],
                            radius=6 * unit, fill='white')
+    # 奶嘴
     nipple_top = cy - 38 * unit
     draw.ellipse([cx - 6 * unit, nipple_top, cx + 6 * unit, neck_top + 3 * unit],
                  fill='white')
+    # 液面
     liquid_top = cy - 2 * unit
     draw.rounded_rectangle([bottle_left + 3 * unit, liquid_top,
                             bottle_right - 3 * unit, bottle_bottom - 3 * unit],
@@ -2381,7 +2424,6 @@ def pwa_icon(size):
     img.save(buf, format='PNG')
     buf.seek(0)
     return send_file(buf, mimetype='image/png')
-
 
 _db_initialized = False
 _db_init_lock = threading.Lock()
@@ -2399,6 +2441,7 @@ def ensure_db():
 
 @app.cli.command('reset-password')
 def reset_password_cmd():
+    """重置管理员密码，生成随机密码并输出"""
     with app.app_context():
         db = get_db()
         admin = db.execute("SELECT id, username FROM users WHERE role = 'admin' LIMIT 1").fetchone()
