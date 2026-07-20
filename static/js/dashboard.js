@@ -1,121 +1,195 @@
-{% extends "base.html" %}
-{% set active_page = 'dashboard' %}
-{% block title %}总览 - Baby Tracker{% endblock %}
+// ── Dashboard (总览) ────────────────────────────────────────
+let dashboardData = null;
 
-{% block content %}
-<div class="space-y-5 fade-in pb-20 md:pb-0">
-    <!-- 页头 -->
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-xl font-semibold">总览</h1>
-            <p class="text-text-muted text-sm mt-0.5 font-mono" id="today-date"></p>
-        </div>
-        <div class="flex items-center gap-2">
-            {% if not current_user %}
-            <a href="/login" class="btn-primary flex items-center gap-2 text-sm">
-                <i data-lucide="log-in" class="w-4 h-4"></i>
-                登录
-            </a>
-            {% endif %}
-        </div>
-    </div>
+async function initDashboard() {
+    const dateEl = document.getElementById('today-date');
+    if (dateEl) {
+        dateEl.textContent = new Date().toLocaleDateString('zh-CN', {
+            year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short'
+        });
+    }
+    await refreshDashboard();
+}
 
-    <!-- 未登录提示 -->
-    {% if not current_user %}
-    <div class="card text-center py-4">
-        <p class="text-text-muted text-sm">登录后可快速记录喂养、排泄、症状</p>
-        <a href="/login" class="text-accent text-sm hover:underline mt-1 inline-block">立即登录</a>
-    </div>
-    {% endif %}
+document.addEventListener('DOMContentLoaded', () => {
+    initDashboard();
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshDashboard();
+    });
+});
 
-    <!-- 奶量进度 + 喂养次数 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="card flex items-center gap-5">
-            <div class="relative flex-shrink-0">
-                <svg width="110" height="110" id="milk-ring">
-                    <circle cx="55" cy="55" r="46" fill="none" class="ring-bg" stroke-width="6"/>
-                    <circle cx="55" cy="55" r="46" fill="none"
-                            class="progress-ring-circle ring-fill" stroke-width="6" stroke-linecap="round"
-                            stroke-dasharray="289.03" stroke-dashoffset="289.03"/>
-                </svg>
-                <div class="absolute inset-0 flex flex-col items-center justify-center">
-                    <span class="counter-value text-2xl text-accent" id="milk-consumed">0</span>
-                    <span class="text-text-muted text-xs">ml</span>
-                </div>
+// 手动刷新（带旋转动画）
+async function refreshDashboard() {
+    try {
+        const data = await api(`/api/records/today?date=${getLocalDate()}`);
+        dashboardData = data;
+        renderDashboard(data);
+    } catch (e) {
+        console.error('刷新失败:', e);
+    }
+}
+
+function renderDashboard(data) {
+    // 奶量进度环
+    document.getElementById('milk-consumed').textContent = data.total_feed_ml;
+    document.getElementById('milk-target').textContent = data.target_ml;
+    document.getElementById('milk-remaining').textContent = data.remaining_ml;
+
+    const ring = document.getElementById('milk-ring');
+    if (ring) setProgressRing(ring, data.feed_progress);
+
+    if (data.estimate) {
+        document.getElementById('estimate-detail').textContent = data.estimate.calculation_detail;
+    }
+
+    // 喂养次数
+    document.getElementById('feed-count').textContent = data.feed_count;
+    document.getElementById('feed-total').textContent = data.estimated_feeds_per_day;
+    document.getElementById('feed-progress-bar').style.width = (data.feed_progress * 100) + '%';
+    document.getElementById('feeds-left').textContent = data.estimated_feeds_left;
+
+    // 排泄
+    document.getElementById('urine-count').textContent = data.urine_count;
+    document.getElementById('stool-count').textContent = data.stool_count;
+
+    // 上次喂养
+    document.getElementById('last-feed-time').textContent = data.last_feed_time ? formatTime(data.last_feed_time) : '暂无记录';
+
+    // 快速记录按钮（仅首次渲染）
+    const btnContainer = document.getElementById('quick-buttons');
+    if (btnContainer && data.quick_buttons) {
+        renderQuickButtons(data.quick_buttons);
+    }
+
+    // 最近记录
+    renderRecentRecords(data.recent_records);
+}
+
+function renderQuickButtons(buttons) {
+    const container = document.getElementById('quick-buttons');
+    if (!container) return;
+
+    const typeIcons = { feed: 'droplets', excrete: 'circle-dot', symptom: 'heart-pulse', supplement: 'pill' };
+    const typeColors = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400' };
+    const typeBorders = { feed: 'border-blue-500/20', excrete: 'border-amber-500/20', symptom: 'border-red-500/20', supplement: 'border-purple-500/20' };
+
+    let html = '';
+    for (const btn of buttons) {
+        html += `
+        <button class="quick-btn flex flex-col items-center gap-1 p-3 rounded-xl border ${typeBorders[btn.type]} bg-surface hover:bg-white/5 active:scale-95 transition-all duration-150 cursor-pointer"
+                data-btn-id="${btn.id}" data-btn-label="${esc(btn.label)}">
+            <i data-lucide="${typeIcons[btn.type]}" class="w-5 h-5 ${typeColors[btn.type]}"></i>
+            <span class="text-xs text-text-secondary">${esc(btn.label)}</span>
+        </button>`;
+    }
+    container.innerHTML = html;
+
+    // 事件委托只绑定一次
+    if (!container.dataset.delegateBound) {
+        container.addEventListener('click', e => {
+            const btn = e.target.closest('.quick-btn');
+            if (!btn) return;
+            const btnId = parseInt(btn.dataset.btnId);
+            const label = btn.dataset.btnLabel;
+            quickRecord(btnId, label);
+        });
+        container.dataset.delegateBound = 'true';
+    }
+
+    lucide.createIcons();
+}
+
+async function quickRecord(btnId, label) {
+    try {
+        const now = new Date();
+        const timestamp = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+        const data = await api(`/api/quick-record/${btnId}`, { method: 'POST', body: JSON.stringify({ timestamp, date: getLocalDate() }) });
+        showToast(`${label} - 记录成功`);
+        // API 直接返回更新后的概览数据，无需二次请求
+        dashboardData = data;
+        renderDashboard(data);
+    } catch (e) {
+        showToast(e.message);
+    }
+}
+
+function renderRecentRecords(records) {
+    const container = document.getElementById('recent-records');
+    if (!records || records.length === 0) {
+        container.innerHTML = `<div class="card text-center text-text-muted text-sm py-8"><p>暂无记录</p></div>`;
+        return;
+    }
+
+    container.innerHTML = records.map(r => {
+        const badgeMap = { feed: 'badge-feed', excrete: 'badge-excrete', symptom: 'badge-symptom', supplement: 'badge-supplement' };
+        const typeClass = badgeMap[r.type] || 'badge-symptom';
+        const bgMap = { feed: 'bg-blue-500/10', excrete: 'bg-amber-500/10', symptom: 'bg-red-500/10', supplement: 'bg-purple-500/10' };
+        const iconMap = { feed: 'droplets', excrete: 'circle-dot', symptom: 'heart-pulse', supplement: 'pill' };
+        const colorMap = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400' };
+        const detail = buildRecordDetail(r);
+
+        return `
+        <div class="card flex items-center gap-3 py-3 px-4 fade-in">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${bgMap[r.type] || bgMap.symptom}">
+                <i data-lucide="${iconMap[r.type] || iconMap.symptom}" class="w-4 h-4 ${colorMap[r.type] || colorMap.symptom}"></i>
             </div>
             <div class="flex-1 min-w-0">
-                <p class="text-text-secondary text-sm mb-1">今日奶量</p>
-                <p class="text-text-muted text-xs mb-2">目标 <span class="font-mono text-text-secondary" id="milk-target">0</span> ml</p>
-                <div class="flex items-center gap-2 text-xs">
-                    <span class="text-text-muted">剩余</span>
-                    <span class="font-mono text-text-secondary" id="milk-remaining">0</span>
-                    <span class="text-text-muted">ml</span>
+                <div class="flex items-center gap-2">
+                    <span class="text-sm text-text-primary">${esc(typeLabel(r.type, r.sub_type))}</span>
+                    <span class="text-xs px-1.5 py-0.5 rounded border ${typeClass}">${TYPE_LABELS[r.type]}</span>
                 </div>
-                <p class="text-text-muted text-xs mt-2" id="estimate-detail"></p>
+                <p class="text-xs text-text-muted mt-0.5">${esc(detail)}</p>
             </div>
-        </div>
-
-        <div class="card">
-            <div class="flex items-center justify-between mb-3">
-                <p class="text-text-secondary text-sm">喂养次数</p>
-                <span class="font-mono text-xs text-text-muted"><span id="feed-count">0</span> / <span id="feed-total">8</span></span>
+            <div class="flex items-center gap-1 flex-shrink-0">
+                <span class="font-mono text-xs text-text-muted">${formatTime(r.timestamp)}</span>
+                <button class="text-text-muted hover:text-amber-400 transition-colors p-1" onclick="openEditModal(${r.id}, onDashboardEditSaved)" title="编辑">
+                    <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                </button>
+                <button class="text-text-muted hover:text-red-400 transition-colors p-1" onclick="deleteDashboardRecord(${r.id})" title="删除">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
             </div>
-            <div class="w-full h-2.5 bg-base rounded-full overflow-hidden mb-3">
-                <div class="progress-bar-fill h-full bg-accent rounded-full" id="feed-progress-bar" style="width: 0%"></div>
-            </div>
-            <div class="grid grid-cols-3 gap-3 text-center">
-                <div>
-                    <p class="counter-value text-lg text-text-primary" id="feeds-left">0</p>
-                    <p class="text-text-muted text-xs">剩余次数</p>
-                </div>
-                <div>
-                    <p class="counter-value text-lg text-blue-400" id="urine-count">0</p>
-                    <p class="text-text-muted text-xs">排尿</p>
-                </div>
-                <div>
-                    <p class="counter-value text-lg text-amber-400" id="stool-count">0</p>
-                    <p class="text-text-muted text-xs">排便</p>
-                </div>
-            </div>
-        </div>
-    </div>
+        </div>`;
+    }).join('');
 
-    <!-- 上次喂养 -->
-    <div class="card flex items-center gap-3">
-        <div class="w-9 h-9 rounded-lg bg-blue-500/10 flex items-center justify-center flex-shrink-0">
-            <i data-lucide="clock" class="w-4 h-4 text-blue-400"></i>
-        </div>
-        <div class="flex-1 min-w-0">
-            <p class="text-text-secondary text-sm">上次喂养</p>
-            <p class="font-mono text-sm text-text-primary" id="last-feed-time">暂无记录</p>
-        </div>
-    </div>
+    lucide.createIcons();
+}
 
-    <!-- 快速记录按钮（仅登录用户可见） -->
-    {% if current_user and current_user.status == 'approved' %}
-    <div>
-        <h2 class="text-sm font-medium text-text-secondary mb-3">快速记录</h2>
-        <div id="quick-buttons" class="grid grid-cols-3 md:grid-cols-4 gap-2">
-            <p class="text-text-muted text-sm col-span-full text-center py-4">加载中...</p>
-        </div>
-    </div>
-    {% endif %}
+function buildRecordDetail(r) {
+    const parts = [];
+    if (r.amount) parts.push(`${r.amount}ml`);
+    if (r.duration) parts.push(`${r.duration}分钟`);
+    if (r.temperature) parts.push(`${r.temperature}°C`);
+    if (r.color) parts.push(r.color);
+    if (r.consistency) parts.push(r.consistency);
+    if (r.note) parts.push(r.note);
+    return parts.join(' · ') || '--';
+}
 
-    <!-- 最近记录 -->
-    <div>
-        <div class="flex items-center justify-between mb-3">
-            <h2 class="text-sm font-medium text-text-secondary">最近记录</h2>
-            <a href="/vaccine" class="text-xs text-text-muted hover:text-accent transition-colors">全部日程</a>
-        </div>
-        <div class="space-y-2" id="recent-records">
-            <div class="card text-center text-text-muted text-sm py-8">
-                <p>暂无记录</p>
-            </div>
-        </div>
-    </div>
-</div>
-{% endblock %}
+function onDashboardEditSaved(data) {
+    // 编辑后 API 直接返回概览数据，无需二次 GET 请求
+    if (data && data.total_feed_ml !== undefined) {
+        dashboardData = data;
+        renderDashboard(data);
+    } else {
+        // 兜底：如果返回数据不包含概览，则重新请求
+        refreshDashboard();
+    }
+}
 
-{% block scripts %}
-<script src="/static/js/dashboard.js" data-page-script></script>
-{% endblock %}
+async function deleteDashboardRecord(id) {
+    if (!await showConfirm('确定删除此记录？', { confirmText: '删除', danger: true })) return;
+    try {
+        const data = await api(`/api/records/${id}?date=${getLocalDate()}`, { method: 'DELETE' });
+        showToast('已删除');
+        // 删除后 API 直接返回概览数据，无需二次 GET 请求
+        if (data && data.total_feed_ml !== undefined) {
+            dashboardData = data;
+            renderDashboard(data);
+        } else {
+            await refreshDashboard();
+        }
+    } catch (e) {
+        showToast(e.message || '删除失败');
+    }
+}
