@@ -1,7 +1,8 @@
 // ── Dashboard (总览) ────────────────────────────────────────
 let dashboardData = null;
 let timerIntervals = {}; // 存储计时器 interval ID
-let timerStartTimes = {}; // 存储开始时间戳
+let timerStartTimes = {}; // 存储客户端开始时间戳（用于计算本地偏移）
+let timerServerStartTimes = {}; // 存储服务器开始时间戳（用于显示校准）
 let isInitialized = false;
 
 // 计时器状态键名（仅用于本地缓存，主数据在服务器）
@@ -210,22 +211,25 @@ async function handleBreastButtonClick(btnId, label) {
 async function startTimer(btnId, label) {
     try {
         const result = await serverTimerStart(btnId, label);
-        const startTime = result.start_time * 1000; // 转为毫秒
+        const serverStartTime = result.start_time; // 服务器时间（秒）
+        const clientStartTime = Date.now(); // 客户端当前时间（毫秒）
         
-        // 更新本地缓存
+        // 更新本地缓存 - 存储客户端时间用于计算
         setCachedTimerState(btnId, {
             isRunning: true,
-            startTime: startTime,
+            clientStartTime: clientStartTime,
+            serverStartTime: serverStartTime,
             label: label,
             btnId: btnId
         });
-        timerStartTimes[btnId] = startTime;
+        timerStartTimes[btnId] = clientStartTime;
+        timerServerStartTimes[btnId] = serverStartTime;
         
         // 更新按钮文字
         updateBreastButtonLabel(btnId, '⏱ 停止');
         
         // 更新最近记录中的显示
-        updateRecentRecordTimerDisplay(btnId, label, startTime);
+        updateRecentRecordTimerDisplay(btnId, label, clientStartTime);
         
         // 启动计时器更新
         if (timerIntervals[btnId]) {
@@ -234,7 +238,8 @@ async function startTimer(btnId, label) {
         timerIntervals[btnId] = setInterval(() => {
             const cached = getCachedTimerState(btnId);
             if (cached && cached.isRunning) {
-                updateRecentRecordTimerDisplay(btnId, label, cached.startTime);
+                // 使用客户端开始时间计算
+                updateRecentRecordTimerDisplay(btnId, label, cached.clientStartTime);
             }
         }, 1000);
         
@@ -255,11 +260,13 @@ async function stopTimerAndRecord(btnId, label) {
         // 从服务器停止计时并获取时长
         const result = await serverTimerStop(btnId);
         const durationSeconds = result.duration_seconds;
-        const startTime = result.start_time * 1000;
+        // 使用服务器返回的 start_time 记录开始时间
+        const serverStartTime = result.start_time;
         
         // 清除本地缓存
         setCachedTimerState(btnId, null);
         delete timerStartTimes[btnId];
+        delete timerServerStartTimes[btnId];
         
         // 恢复按钮文字
         updateBreastButtonLabel(btnId, label);
@@ -271,8 +278,8 @@ async function stopTimerAndRecord(btnId, label) {
             return;
         }
         
-        // 构建记录数据
-        const startDate = new Date(startTime);
+        // 构建记录数据 - 使用服务器时间
+        const startDate = new Date(serverStartTime * 1000);
         const timestamp = formatDateTimeForAPI(startDate);
         
         const btnInfo = findButtonInfo(btnId);
@@ -345,7 +352,7 @@ function updateBreastButtonLabel(btnId, label) {
     }
 }
 
-function updateRecentRecordTimerDisplay(btnId, label, startTime) {
+function updateRecentRecordTimerDisplay(btnId, label, clientStartTime) {
     const container = document.getElementById('recent-records');
     if (!container) return;
     
@@ -359,7 +366,8 @@ function updateRecentRecordTimerDisplay(btnId, label, startTime) {
     }
     
     if (timerEntry) {
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        // 使用客户端开始时间计算经过时长（避免服务器时间差问题）
+        const elapsed = Math.max(0, Math.floor((Date.now() - clientStartTime) / 1000));
         const timeDisplay = timerEntry.querySelector('.timer-display');
         if (timeDisplay) {
             timeDisplay.textContent = formatDurationToChinese(elapsed);
@@ -367,8 +375,15 @@ function updateRecentRecordTimerDisplay(btnId, label, startTime) {
         
         const startDisplay = timerEntry.querySelector('.timer-start-time');
         if (startDisplay) {
-            const startDate = new Date(startTime);
-            startDisplay.textContent = formatTime(startDate.toISOString());
+            // 使用服务器时间显示开始时间（更准确）
+            const cached = getCachedTimerState(btnId);
+            if (cached && cached.serverStartTime) {
+                const startDate = new Date(cached.serverStartTime * 1000);
+                startDisplay.textContent = formatTime(startDate.toISOString());
+            } else {
+                const startDate = new Date(clientStartTime);
+                startDisplay.textContent = formatTime(startDate.toISOString());
+            }
         }
     }
 }
@@ -444,24 +459,33 @@ async function restoreTimerStatesFromServer() {
             const state = allStates[String(btnId)];
             
             if (state && state.is_running) {
-                const startTime = state.start_time * 1000;
+                const serverStartTime = state.start_time; // 服务器时间（秒）
+                const clientNow = Date.now();
+                // 计算服务器已运行时间
+                const serverElapsed = Math.floor(clientNow / 1000) - serverStartTime;
                 
                 // 检查是否超时（超过2小时自动结束）
-                if (Date.now() - startTime > 2 * 60 * 60 * 1000) {
+                if (serverElapsed > 2 * 60 * 60) {
                     await serverTimerClear(btnId);
                     setCachedTimerState(btnId, null);
                     updateBreastButtonLabel(btnId, label);
                     continue;
                 }
                 
+                // 使用客户端当前时间作为开始时间的基准
+                // 通过服务器已运行时间反推客户端开始时间
+                const clientStartTime = clientNow - (serverElapsed * 1000);
+                
                 // 恢复状态
                 setCachedTimerState(btnId, {
                     isRunning: true,
-                    startTime: startTime,
+                    clientStartTime: clientStartTime,
+                    serverStartTime: serverStartTime,
                     label: label,
                     btnId: btnId
                 });
-                timerStartTimes[btnId] = startTime;
+                timerStartTimes[btnId] = clientStartTime;
+                timerServerStartTimes[btnId] = serverStartTime;
                 
                 // 更新按钮文字
                 updateBreastButtonLabel(btnId, '⏱ 停止');
@@ -473,12 +497,12 @@ async function restoreTimerStatesFromServer() {
                 timerIntervals[btnId] = setInterval(() => {
                     const cached = getCachedTimerState(btnId);
                     if (cached && cached.isRunning) {
-                        updateRecentRecordTimerDisplay(btnId, label, cached.startTime);
+                        updateRecentRecordTimerDisplay(btnId, label, cached.clientStartTime);
                     }
                 }, 1000);
                 
                 // 更新显示
-                updateRecentRecordTimerDisplay(btnId, label, startTime);
+                updateRecentRecordTimerDisplay(btnId, label, clientStartTime);
             } else {
                 // 清除本地状态
                 const cached = getCachedTimerState(btnId);
