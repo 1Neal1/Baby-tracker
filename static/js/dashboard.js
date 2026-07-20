@@ -237,7 +237,15 @@ function stopTimerAndRecord(btnId, label) {
         .then(() => {
             const mins = Math.floor(durationSeconds / 60);
             const secs = durationSeconds % 60;
-            showToast(`${label} - 记录成功 (${mins}分钟${secs}秒)`);
+            let timeStr = '';
+            if (mins > 0 && secs > 0) {
+                timeStr = `${mins}分钟${secs}秒`;
+            } else if (mins > 0) {
+                timeStr = `${mins}分钟`;
+            } else {
+                timeStr = `${secs}秒`;
+            }
+            showToast(`${label} - 记录成功 (${timeStr})`);
             clearTimerDisplayFromRecent(btnId);
             refreshDashboard();
         })
@@ -282,6 +290,18 @@ function updateBreastButtonLabel(btnId, label) {
     }
 }
 
+function formatDurationToChinese(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins > 0 && secs > 0) {
+        return `${mins}分钟${secs}秒`;
+    } else if (mins > 0) {
+        return `${mins}分钟`;
+    } else {
+        return `${secs}秒`;
+    }
+}
+
 function updateRecentRecordTimerDisplay(btnId, label, startTime) {
     // 在最近记录中找到对应的条目并更新显示
     const container = document.getElementById('recent-records');
@@ -300,13 +320,11 @@ function updateRecentRecordTimerDisplay(btnId, label, startTime) {
     }
     
     if (timerEntry) {
-        // 更新计时显示
+        // 更新计时显示 - XX分钟XX秒 格式
         const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        const mins = Math.floor(elapsed / 60);
-        const secs = elapsed % 60;
         const timeDisplay = timerEntry.querySelector('.timer-display');
         if (timeDisplay) {
-            timeDisplay.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            timeDisplay.textContent = formatDurationToChinese(elapsed);
         }
         
         // 确保显示开始时间
@@ -348,7 +366,7 @@ function createTimerEntry(btnId, label) {
     if (detailP) {
         const startDate = new Date();
         const timeStr = formatTime(startDate.toISOString());
-        detailP.innerHTML = `开始: <span class="timer-start-time">${timeStr}</span> · 已计时: <span class="timer-display text-amber-400 font-mono">00:00</span>`;
+        detailP.innerHTML = `开始: <span class="timer-start-time">${timeStr}</span> · 已计时: <span class="timer-display text-amber-400 font-mono">0秒</span>`;
     }
     
     // 移除编辑和删除按钮
@@ -489,16 +507,7 @@ function buildRecordDetail(r) {
     const parts = [];
     if (r.amount) parts.push(`${r.amount}ml`);
     if (r.duration) {
-        // 将秒数格式化为 "XX分钟XX秒"
-        const mins = Math.floor(r.duration / 60);
-        const secs = r.duration % 60;
-        if (mins > 0 && secs > 0) {
-            parts.push(`${mins}分钟${secs}秒`);
-        } else if (mins > 0) {
-            parts.push(`${mins}分钟`);
-        } else {
-            parts.push(`${secs}秒`);
-        }
+        parts.push(formatDurationToChinese(r.duration));
     }
     if (r.temperature) parts.push(`${r.temperature}°C`);
     if (r.color) parts.push(r.color);
