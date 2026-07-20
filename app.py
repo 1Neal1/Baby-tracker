@@ -3,6 +3,7 @@ import sqlite3
 import hashlib
 import json as json_module
 import threading
+import time
 from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, jsonify, g, send_file, session, redirect, url_for
 from io import StringIO, BytesIO
@@ -2372,6 +2373,127 @@ def _ha_do_press(btn_id):
         }
     })
 
+# ── API: Timer State (母乳计时) ────────────────────────────
+
+_timer_states = {}  # {key: {'is_running': bool, 'start_time': float, 'label': str, 'user_id': int, 'btn_id': int}}
+
+@app.route('/api/timer/state/<int:btn_id>', methods=['GET'])
+@login_required
+def get_timer_state(btn_id):
+    """获取单个计时器状态"""
+    u = current_user()
+    key = f"{u['id']}_{btn_id}"
+    state = _timer_states.get(key)
+    if state and state.get('is_running'):
+        return jsonify({
+            'is_running': True,
+            'start_time': state['start_time'],
+            'label': state.get('label', ''),
+            'btn_id': btn_id
+        })
+    return jsonify({'is_running': False})
+
+
+@app.route('/api/timer/all', methods=['GET'])
+@login_required
+def get_all_timer_states():
+    """获取当前用户所有计时状态"""
+    u = current_user()
+    result = {}
+    prefix = f"{u['id']}_"
+    for key, state in _timer_states.items():
+        if key.startswith(prefix) and state.get('is_running'):
+            btn_id = state.get('btn_id')
+            if btn_id is not None:
+                result[str(btn_id)] = {
+                    'is_running': True,
+                    'start_time': state['start_time'],
+                    'label': state.get('label', '')
+                }
+    return jsonify(result)
+
+
+@app.route('/api/timer/start', methods=['POST'])
+@login_required
+def timer_start():
+    """开始计时"""
+    data = request.get_json()
+    btn_id = data.get('btn_id')
+    label = data.get('label', '')
+    if not btn_id:
+        return jsonify({'error': '缺少按钮ID'}), 400
+    
+    u = current_user()
+    key = f"{u['id']}_{btn_id}"
+    
+    # 如果已存在计时状态，先清除
+    if key in _timer_states:
+        del _timer_states[key]
+    
+    _timer_states[key] = {
+        'is_running': True,
+        'start_time': time.time(),
+        'label': label,
+        'user_id': u['id'],
+        'btn_id': btn_id
+    }
+    add_log('开始计时', 'timer', btn_id, f"{label} 开始计时")
+    return jsonify({
+        'message': '计时已开始',
+        'start_time': _timer_states[key]['start_time']
+    })
+
+
+@app.route('/api/timer/stop', methods=['POST'])
+@login_required
+def timer_stop():
+    """停止计时并返回时长（秒）"""
+    data = request.get_json()
+    btn_id = data.get('btn_id')
+    if not btn_id:
+        return jsonify({'error': '缺少按钮ID'}), 400
+    
+    u = current_user()
+    key = f"{u['id']}_{btn_id}"
+    state = _timer_states.get(key)
+    
+    if not state or not state.get('is_running'):
+        return jsonify({'error': '没有正在进行的计时'}), 400
+    
+    start_time = state['start_time']
+    duration_seconds = int(time.time() - start_time)
+    label = state.get('label', '')
+    
+    # 清除计时状态
+    del _timer_states[key]
+    
+    add_log('停止计时', 'timer', btn_id, f"{label} 计时 {duration_seconds}秒")
+    
+    return jsonify({
+        'message': '计时已停止',
+        'duration_seconds': duration_seconds,
+        'start_time': start_time
+    })
+
+
+@app.route('/api/timer/clear', methods=['POST'])
+@login_required
+def timer_clear():
+    """清除计时状态（取消计时）"""
+    data = request.get_json()
+    btn_id = data.get('btn_id')
+    if not btn_id:
+        return jsonify({'error': '缺少按钮ID'}), 400
+    
+    u = current_user()
+    key = f"{u['id']}_{btn_id}"
+    if key in _timer_states:
+        state = _timer_states.get(key)
+        label = state.get('label', '') if state else ''
+        del _timer_states[key]
+        add_log('清除计时', 'timer', btn_id, f"{label} 计时已清除")
+    
+    return jsonify({'message': '已清除'})
 
 # ── PWA Icon Generation ──────────────────────────────────
 
