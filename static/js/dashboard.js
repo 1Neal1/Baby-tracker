@@ -241,9 +241,9 @@ async function handleSleepQuickRecord(btnId, label) {
     
     const btnSubType = btn.dataset.btnSubType;
     const btnAmount = parseFloat(btn.dataset.btnAmount) || 0;
-    const presetMinutes = btnAmount;
+    const totalMinutes = btnAmount;
     
-    if (presetMinutes <= 0) {
+    if (totalMinutes <= 0) {
         showToast('请先设置睡眠时长（预设量）');
         return;
     }
@@ -251,31 +251,98 @@ async function handleSleepQuickRecord(btnId, label) {
     try {
         const now = new Date();
         const startTime = new Date(now.getTime());
-        const endTime = new Date(now.getTime() + presetMinutes * 60000);
-        const timestamp = formatDateTimeForAPI(startTime);
+        const endTime = new Date(now.getTime() + totalMinutes * 60000);
         
-        const recordData = {
-            type: 'sleep',
-            sub_type: btnSubType,
-            amount: 0,
-            duration: presetMinutes * 60,  // 转换为秒存储
-            timestamp: timestamp,
-            note: '',
-            _date: getLocalDate()
-        };
+        // 检查是否跨天（开始日期和结束日期不同）
+        const startDateStr = formatDateForAPI(startTime);
+        const endDateStr = formatDateForAPI(endTime);
         
-        const data = await api('/api/records', {
-            method: 'POST',
-            body: JSON.stringify(recordData)
-        });
+        if (startDateStr !== endDateStr) {
+            // ---- 跨天：拆分为两段记录 ----
+            
+            // 第一段：从开始时间到当天 23:59:59
+            const dayEnd = new Date(startTime);
+            dayEnd.setHours(23, 59, 59, 999);
+            const firstDurationMinutes = Math.round((dayEnd - startTime) / 60000);
+            
+            // 第二段：从第二天 00:00:00 到结束时间
+            const dayStart = new Date(endTime);
+            dayStart.setHours(0, 0, 0, 0);
+            const secondDurationMinutes = Math.round((endTime - dayStart) / 60000);
+            
+            // 确保两段时间都大于0
+            if (firstDurationMinutes > 0 && secondDurationMinutes > 0) {
+                // 第一段记录
+                const firstRecordData = {
+                    type: 'sleep',
+                    sub_type: btnSubType,
+                    amount: 0,
+                    duration: firstDurationMinutes * 60,  // 转换为秒
+                    timestamp: formatDateTimeForAPI(startTime),
+                    note: '',
+                    _date: getLocalDate()
+                };
+                await api('/api/records', {
+                    method: 'POST',
+                    body: JSON.stringify(firstRecordData)
+                });
+                
+                // 第二段记录
+                const secondRecordData = {
+                    type: 'sleep',
+                    sub_type: btnSubType,
+                    amount: 0,
+                    duration: secondDurationMinutes * 60,  // 转换为秒
+                    timestamp: formatDateTimeForAPI(dayStart),
+                    note: '',
+                    _date: getLocalDate()
+                };
+                await api('/api/records', {
+                    method: 'POST',
+                    body: JSON.stringify(secondRecordData)
+                });
+                
+                showToast(`${label} - 记录成功 (跨天，已拆分为2段)`);
+            } else {
+                // 如果某一段为0，不拆分，按单条记录处理
+                await submitSingleSleepRecord(btnSubType, totalMinutes, startTime, label);
+            }
+        } else {
+            // ---- 不跨天：单条记录 ----
+            await submitSingleSleepRecord(btnSubType, totalMinutes, startTime, label);
+        }
         
-        showToast(`${label} - 记录成功 (${presetMinutes}分钟)`);
-        dashboardData = data;
-        renderDashboard(data);
+        // 刷新页面数据
+        await refreshDashboard();
         await restoreTimerStatesFromServer();
+        
     } catch (e) {
         showToast(e.message || '记录失败');
     }
+}
+
+// 新增：提交单条睡眠记录
+async function submitSingleSleepRecord(subType, minutes, startTime, label) {
+    const recordData = {
+        type: 'sleep',
+        sub_type: subType,
+        amount: 0,
+        duration: minutes * 60,  // 转换为秒
+        timestamp: formatDateTimeForAPI(startTime),
+        note: '',
+        _date: getLocalDate()
+    };
+    await api('/api/records', {
+        method: 'POST',
+        body: JSON.stringify(recordData)
+    });
+    showToast(`${label} - 记录成功 (${minutes}分钟)`);
+}
+
+// 新增：格式化日期为 YYYY-MM-DD
+function formatDateForAPI(date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`;
 }
 
 // ── 母乳按钮计时器逻辑 ──────────────────────────────────────
