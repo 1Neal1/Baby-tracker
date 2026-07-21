@@ -249,9 +249,22 @@ def init_db():
 def _migrate_check_constraints(db):
     # 迁移 records 表 - 移除 CHECK 约束以支持 sleep 类型
     try:
+        # 先检查表是否存在 CHECK 约束
         schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='records'").fetchone()
         if schema and 'CHECK' in schema['sql']:
+            # 检查是否已经有 sleep 类型的记录
+            has_sleep = False
+            try:
+                # 尝试查询 sleep 类型的数据
+                check = db.execute("SELECT 1 FROM records WHERE type='sleep' LIMIT 1").fetchone()
+                has_sleep = bool(check)
+            except Exception:
+                has_sleep = False
+            
+            # 重命名旧表
             db.execute("ALTER TABLE records RENAME TO _records_old")
+            
+            # 创建新表（无 CHECK 约束）
             db.execute('''CREATE TABLE records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 baby_id INTEGER NOT NULL DEFAULT 1,
@@ -267,6 +280,8 @@ def _migrate_check_constraints(db):
                 timestamp TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
             )''')
+            
+            # 获取旧表的所有列
             cols = 'id,baby_id,user_id,type,sub_type,amount,duration,color,consistency,temperature,note,timestamp,created_at'
             db.execute(f"INSERT INTO records ({cols}) SELECT {cols} FROM _records_old")
             db.execute("DROP TABLE _records_old")
@@ -275,9 +290,22 @@ def _migrate_check_constraints(db):
             db.execute("CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records(timestamp)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_records_user_id ON records(user_id)")
             db.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        # 如果迁移失败，尝试恢复
+        print(f"Records 表迁移失败: {e}")
+        try:
+            # 检查是否已经存在新表
+            check = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='records'").fetchone()
+            if not check:
+                # 如果旧表还存在，尝试恢复
+                old_check = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='_records_old'").fetchone()
+                if old_check:
+                    db.execute("ALTER TABLE _records_old RENAME TO records")
+                    db.commit()
+        except Exception:
+            pass
 
+    # 迁移 quick_buttons 表
     try:
         schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='quick_buttons'").fetchone()
         if schema and 'CHECK' in schema['sql']:
@@ -299,6 +327,7 @@ def _migrate_check_constraints(db):
     except Exception:
         pass
 
+    # 迁移 users 表
     try:
         schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
         if schema and 'CHECK' in schema['sql']:
