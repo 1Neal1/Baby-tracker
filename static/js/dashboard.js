@@ -1,8 +1,8 @@
 // ── Dashboard (总览) ────────────────────────────────────────
 let dashboardData = null;
 let timerIntervals = {}; // 存储计时器 interval ID
-let timerStartTimes = {}; // 存储客户端开始时间戳（用于计算本地偏移）
-let timerServerStartTimes = {}; // 存储服务器开始时间戳（用于显示校准）
+let timerStartTimes = {}; // 存储客户端开始时间戳
+let timerServerStartTimes = {}; // 存储服务器开始时间戳
 let isInitialized = false;
 
 // 计时器状态键名（仅用于本地缓存，主数据在服务器）
@@ -75,7 +75,6 @@ async function initDashboard() {
         });
     }
     await refreshDashboard();
-    // 页面加载后从服务器恢复计时器状态
     await restoreTimerStatesFromServer();
     isInitialized = true;
 }
@@ -85,19 +84,16 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
             refreshDashboard();
-            // 恢复计时器显示
             restoreTimerStatesFromServer();
         }
     });
 });
 
-// 手动刷新（带旋转动画）
 async function refreshDashboard() {
     try {
         const data = await api(`/api/records/today?date=${getLocalDate()}`);
         dashboardData = data;
         renderDashboard(data);
-        // 刷新后重新应用计时器状态到最近记录
         if (isInitialized) {
             await restoreTimerStatesFromServer();
         }
@@ -107,7 +103,6 @@ async function refreshDashboard() {
 }
 
 function renderDashboard(data) {
-    // 奶量进度环
     document.getElementById('milk-consumed').textContent = data.total_feed_ml;
     document.getElementById('milk-target').textContent = data.target_ml;
     document.getElementById('milk-remaining').textContent = data.remaining_ml;
@@ -119,26 +114,21 @@ function renderDashboard(data) {
         document.getElementById('estimate-detail').textContent = data.estimate.calculation_detail;
     }
 
-    // 喂养次数
     document.getElementById('feed-count').textContent = data.feed_count;
     document.getElementById('feed-total').textContent = data.estimated_feeds_per_day;
     document.getElementById('feed-progress-bar').style.width = (data.feed_progress * 100) + '%';
     document.getElementById('feeds-left').textContent = data.estimated_feeds_left;
 
-    // 排泄
     document.getElementById('urine-count').textContent = data.urine_count;
     document.getElementById('stool-count').textContent = data.stool_count;
 
-    // 上次喂养
     document.getElementById('last-feed-time').textContent = data.last_feed_time ? formatTime(data.last_feed_time) : '暂无记录';
 
-    // 快速记录按钮（仅首次渲染）
     const btnContainer = document.getElementById('quick-buttons');
     if (btnContainer && data.quick_buttons) {
         renderQuickButtons(data.quick_buttons);
     }
 
-    // 最近记录
     renderRecentRecords(data.recent_records);
 }
 
@@ -146,13 +136,12 @@ function renderQuickButtons(buttons) {
     const container = document.getElementById('quick-buttons');
     if (!container) return;
 
-    const typeIcons = { feed: 'droplets', excrete: 'circle-dot', symptom: 'heart-pulse', supplement: 'pill' };
-    const typeColors = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400' };
-    const typeBorders = { feed: 'border-blue-500/20', excrete: 'border-amber-500/20', symptom: 'border-red-500/20', supplement: 'border-purple-500/20' };
+    const typeIcons = { feed: 'droplets', excrete: 'circle-dot', symptom: 'heart-pulse', supplement: 'pill', sleep: 'moon' };
+    const typeColors = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400', sleep: 'text-indigo-400' };
+    const typeBorders = { feed: 'border-blue-500/20', excrete: 'border-amber-500/20', symptom: 'border-red-500/20', supplement: 'border-purple-500/20', sleep: 'border-indigo-500/20' };
 
     let html = '';
     for (const btn of buttons) {
-        // 检查是否为母乳左右按钮（根据 label 判断）
         const isBreastBtn = btn.label === '母乳(左)' || btn.label === '母乳(右)';
         const cachedState = isBreastBtn ? getCachedTimerState(btn.id) : null;
         let btnLabel = esc(btn.label);
@@ -160,15 +149,14 @@ function renderQuickButtons(buttons) {
             btnLabel = '⏱ 停止';
         }
         html += `
-        <button class="quick-btn flex flex-col items-center gap-1 p-3 rounded-xl border ${typeBorders[btn.type]} bg-surface hover:bg-white/5 active:scale-95 transition-all duration-150 cursor-pointer"
-                data-btn-id="${btn.id}" data-btn-label="${esc(btn.label)}" data-is-breast="${isBreastBtn ? 'true' : 'false'}">
-            <i data-lucide="${typeIcons[btn.type]}" class="w-5 h-5 ${typeColors[btn.type]}"></i>
+        <button class="quick-btn flex flex-col items-center gap-1 p-3 rounded-xl border ${typeBorders[btn.type] || typeBorders.symptom} bg-surface hover:bg-white/5 active:scale-95 transition-all duration-150 cursor-pointer"
+                data-btn-id="${btn.id}" data-btn-label="${esc(btn.label)}" data-is-breast="${isBreastBtn ? 'true' : 'false'}" data-btn-type="${esc(btn.type)}" data-btn-amount="${btn.amount || 0}">
+            <i data-lucide="${typeIcons[btn.type] || typeIcons.symptom}" class="w-5 h-5 ${typeColors[btn.type] || typeColors.symptom}"></i>
             <span class="text-xs text-text-secondary">${btnLabel}</span>
         </button>`;
     }
     container.innerHTML = html;
 
-    // 事件委托只绑定一次
     if (!container.dataset.delegateBound) {
         container.addEventListener('click', e => {
             const btn = e.target.closest('.quick-btn');
@@ -176,9 +164,12 @@ function renderQuickButtons(buttons) {
             const btnId = parseInt(btn.dataset.btnId);
             const label = btn.dataset.btnLabel;
             const isBreast = btn.dataset.isBreast === 'true';
+            const btnType = btn.dataset.btnType;
             
             if (isBreast) {
                 handleBreastButtonClick(btnId, label);
+            } else if (btnType === 'sleep') {
+                handleSleepQuickRecord(btnId, label);
             } else {
                 quickRecord(btnId, label);
             }
@@ -189,18 +180,61 @@ function renderQuickButtons(buttons) {
     lucide.createIcons();
 }
 
-// ── 母乳按钮计时器逻辑（基于服务器） ──────────────────────
+// ── 睡眠快速记录 ────────────────────────────────────────────
+
+async function handleSleepQuickRecord(btnId, label) {
+    const btnInfo = dashboardData.quick_buttons.find(b => b.id === btnId);
+    if (!btnInfo) {
+        showToast('按钮信息未找到');
+        return;
+    }
+    
+    const presetMinutes = btnInfo.amount || 0;
+    if (presetMinutes <= 0) {
+        showToast('请先设置睡眠时长（预设量）');
+        return;
+    }
+    
+    try {
+        const now = new Date();
+        const startTime = new Date(now.getTime());
+        const endTime = new Date(now.getTime() + presetMinutes * 60000);
+        const timestamp = formatDateTimeForAPI(startTime);
+        const endTimeStr = formatDateTimeForAPI(endTime);
+        const startTimeStr = formatDateTimeForAPI(startTime);
+        
+        const recordData = {
+            type: 'sleep',
+            sub_type: btnInfo.sub_type,
+            amount: 0,
+            duration: presetMinutes,
+            timestamp: timestamp,
+            note: `开始: ${startTimeStr} · 结束: ${endTimeStr} · 时长: ${presetMinutes}分钟`,
+            _date: getLocalDate()
+        };
+        
+        const data = await api('/api/records', {
+            method: 'POST',
+            body: JSON.stringify(recordData)
+        });
+        
+        showToast(`${label} - 记录成功 (${presetMinutes}分钟)`);
+        dashboardData = data;
+        renderDashboard(data);
+        await restoreTimerStatesFromServer();
+    } catch (e) {
+        showToast(e.message || '记录失败');
+    }
+}
+
+// ── 母乳按钮计时器逻辑 ──────────────────────────────────────
 
 async function handleBreastButtonClick(btnId, label) {
     try {
-        // 先从服务器获取最新状态
         const state = await serverGetTimerState(btnId);
-        
         if (state && state.is_running) {
-            // 停止计时 → 结束记录
             await stopTimerAndRecord(btnId, label);
         } else {
-            // 开始计时
             await startTimer(btnId, label);
         }
     } catch (e) {
@@ -211,10 +245,9 @@ async function handleBreastButtonClick(btnId, label) {
 async function startTimer(btnId, label) {
     try {
         const result = await serverTimerStart(btnId, label);
-        const serverStartTime = result.start_time; // 服务器时间（秒）
-        const clientStartTime = Date.now(); // 客户端当前时间（毫秒）
+        const serverStartTime = result.start_time;
+        const clientStartTime = Date.now();
         
-        // 更新本地缓存 - 存储客户端时间用于计算
         setCachedTimerState(btnId, {
             isRunning: true,
             clientStartTime: clientStartTime,
@@ -225,20 +258,15 @@ async function startTimer(btnId, label) {
         timerStartTimes[btnId] = clientStartTime;
         timerServerStartTimes[btnId] = serverStartTime;
         
-        // 更新按钮文字
         updateBreastButtonLabel(btnId, '⏱ 停止');
-        
-        // 更新最近记录中的显示
         updateRecentRecordTimerDisplay(btnId, label, clientStartTime);
         
-        // 启动计时器更新
         if (timerIntervals[btnId]) {
             clearInterval(timerIntervals[btnId]);
         }
         timerIntervals[btnId] = setInterval(() => {
             const cached = getCachedTimerState(btnId);
             if (cached && cached.isRunning) {
-                // 使用客户端开始时间计算
                 updateRecentRecordTimerDisplay(btnId, label, cached.clientStartTime);
             }
         }, 1000);
@@ -250,35 +278,28 @@ async function startTimer(btnId, label) {
 }
 
 async function stopTimerAndRecord(btnId, label) {
-    // 清除本地计时器
     if (timerIntervals[btnId]) {
         clearInterval(timerIntervals[btnId]);
         delete timerIntervals[btnId];
     }
     
     try {
-        // 从服务器停止计时并获取时长
         const result = await serverTimerStop(btnId);
         const durationSeconds = result.duration_seconds;
-        // 使用服务器返回的 start_time 记录开始时间
         const serverStartTime = result.start_time;
         
-        // 清除本地缓存
         setCachedTimerState(btnId, null);
         delete timerStartTimes[btnId];
         delete timerServerStartTimes[btnId];
         
-        // 恢复按钮文字
         updateBreastButtonLabel(btnId, label);
         
-        // 如果时长小于10秒，提示并取消记录
         if (durationSeconds < 10) {
             showToast('计时太短（少于10秒），已取消记录');
             clearTimerDisplayFromRecent(btnId);
             return;
         }
         
-        // 构建记录数据 - 使用服务器时间
         const startDate = new Date(serverStartTime * 1000);
         const timestamp = formatDateTimeForAPI(startDate);
         
@@ -288,17 +309,14 @@ async function stopTimerAndRecord(btnId, label) {
             return;
         }
         
-        // 提交记录
         await submitBreastRecord(btnId, label, btnInfo, timestamp, durationSeconds);
         
         const timeStr = formatDurationToChinese(durationSeconds);
         showToast(`${label} - 记录成功 (${timeStr})`);
         clearTimerDisplayFromRecent(btnId);
         await refreshDashboard();
-        
     } catch (e) {
         showToast(e.message || '停止计时失败');
-        // 如果失败，尝试清除本地状态
         clearTimerDisplayFromRecent(btnId);
         setCachedTimerState(btnId, null);
         updateBreastButtonLabel(btnId, label);
@@ -312,9 +330,9 @@ async function submitBreastRecord(btnId, label, btnInfo, timestamp, durationSeco
         amount: btnInfo.amount || 0,
         duration: durationSeconds,
         timestamp: timestamp,
+        note: '母乳计时',
         _date: getLocalDate()
     };
-    
     return await api('/api/records', {
         method: 'POST',
         body: JSON.stringify(recordData)
@@ -365,7 +383,6 @@ function updateRecentRecordTimerDisplay(btnId, label, clientStartTime) {
     }
     
     if (timerEntry) {
-        // 使用客户端开始时间计算经过时长（避免服务器时间差问题）
         const elapsed = Math.max(0, Math.floor((Date.now() - clientStartTime) / 1000));
         const timeDisplay = timerEntry.querySelector('.timer-display');
         if (timeDisplay) {
@@ -374,7 +391,6 @@ function updateRecentRecordTimerDisplay(btnId, label, clientStartTime) {
         
         const startDisplay = timerEntry.querySelector('.timer-start-time');
         if (startDisplay) {
-            // 使用服务器时间显示开始时间（更准确）
             const cached = getCachedTimerState(btnId);
             if (cached && cached.serverStartTime) {
                 const startDate = new Date(cached.serverStartTime * 1000);
@@ -445,8 +461,6 @@ function clearTimerDisplayFromRecent(btnId) {
     }
 }
 
-// ── 从服务器恢复计时状态 ────────────────────────────────────
-
 async function restoreTimerStatesFromServer() {
     try {
         const allStates = await serverGetAllTimerStates();
@@ -458,12 +472,10 @@ async function restoreTimerStatesFromServer() {
             const state = allStates[String(btnId)];
             
             if (state && state.is_running) {
-                const serverStartTime = state.start_time; // 服务器时间（秒）
+                const serverStartTime = state.start_time;
                 const clientNow = Date.now();
-                // 计算服务器已运行时间
                 const serverElapsed = Math.floor(clientNow / 1000) - serverStartTime;
                 
-                // 检查是否超时（超过2小时自动结束）
                 if (serverElapsed > 2 * 60 * 60) {
                     await serverTimerClear(btnId);
                     setCachedTimerState(btnId, null);
@@ -471,11 +483,8 @@ async function restoreTimerStatesFromServer() {
                     continue;
                 }
                 
-                // 使用客户端当前时间作为开始时间的基准
-                // 通过服务器已运行时间反推客户端开始时间
                 const clientStartTime = clientNow - (serverElapsed * 1000);
                 
-                // 恢复状态
                 setCachedTimerState(btnId, {
                     isRunning: true,
                     clientStartTime: clientStartTime,
@@ -486,10 +495,8 @@ async function restoreTimerStatesFromServer() {
                 timerStartTimes[btnId] = clientStartTime;
                 timerServerStartTimes[btnId] = serverStartTime;
                 
-                // 更新按钮文字
                 updateBreastButtonLabel(btnId, '⏱ 停止');
                 
-                // 启动计时器
                 if (timerIntervals[btnId]) {
                     clearInterval(timerIntervals[btnId]);
                 }
@@ -500,10 +507,8 @@ async function restoreTimerStatesFromServer() {
                     }
                 }, 1000);
                 
-                // 更新显示
                 updateRecentRecordTimerDisplay(btnId, label, clientStartTime);
             } else {
-                // 清除本地状态
                 const cached = getCachedTimerState(btnId);
                 if (cached && cached.isRunning) {
                     setCachedTimerState(btnId, null);
@@ -517,12 +522,10 @@ async function restoreTimerStatesFromServer() {
     }
 }
 
-// ── 原有快速记录函数 ────────────────────────────────────────
-
 async function quickRecord(btnId, label) {
     try {
         const now = new Date();
-        const timestamp = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+        const timestamp = formatDateTimeForAPI(now);
         const data = await api(`/api/quick-record/${btnId}`, { method: 'POST', body: JSON.stringify({ timestamp, date: getLocalDate() }) });
         showToast(`${label} - 记录成功`);
         dashboardData = data;
@@ -540,12 +543,13 @@ function renderRecentRecords(records) {
         return;
     }
 
+    const badgeMap = { feed: 'badge-feed', excrete: 'badge-excrete', symptom: 'badge-symptom', supplement: 'badge-supplement', sleep: 'badge-sleep' };
+    const bgMap = { feed: 'bg-blue-500/10', excrete: 'bg-amber-500/10', symptom: 'bg-red-500/10', supplement: 'bg-purple-500/10', sleep: 'bg-indigo-500/10' };
+    const iconMap = { feed: 'droplets', excrete: 'circle-dot', symptom: 'heart-pulse', supplement: 'pill', sleep: 'moon' };
+    const colorMap = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400', sleep: 'text-indigo-400' };
+
     container.innerHTML = records.map(r => {
-        const badgeMap = { feed: 'badge-feed', excrete: 'badge-excrete', symptom: 'badge-symptom', supplement: 'badge-supplement' };
         const typeClass = badgeMap[r.type] || 'badge-symptom';
-        const bgMap = { feed: 'bg-blue-500/10', excrete: 'bg-amber-500/10', symptom: 'bg-red-500/10', supplement: 'bg-purple-500/10' };
-        const iconMap = { feed: 'droplets', excrete: 'circle-dot', symptom: 'heart-pulse', supplement: 'pill' };
-        const colorMap = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400' };
         const detail = buildRecordDetail(r);
 
         return `
@@ -556,7 +560,7 @@ function renderRecentRecords(records) {
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2">
                     <span class="text-sm text-text-primary">${esc(typeLabel(r.type, r.sub_type))}</span>
-                    <span class="text-xs px-1.5 py-0.5 rounded border ${typeClass}">${TYPE_LABELS[r.type]}</span>
+                    <span class="text-xs px-1.5 py-0.5 rounded border ${typeClass}">${TYPE_LABELS[r.type] || '其他'}</span>
                 </div>
                 <p class="text-xs text-text-muted mt-0.5">${esc(detail)}</p>
             </div>
@@ -579,7 +583,19 @@ function buildRecordDetail(r) {
     const parts = [];
     if (r.amount) parts.push(`${r.amount}ml`);
     if (r.duration) {
-        parts.push(formatDurationToChinese(r.duration));
+        if (r.type === 'sleep') {
+            const hours = Math.floor(r.duration / 60);
+            const mins = r.duration % 60;
+            if (hours > 0 && mins > 0) {
+                parts.push(`${hours}小时${mins}分钟`);
+            } else if (hours > 0) {
+                parts.push(`${hours}小时`);
+            } else {
+                parts.push(`${mins}分钟`);
+            }
+        } else {
+            parts.push(formatDurationToChinese(r.duration));
+        }
     }
     if (r.temperature) parts.push(`${r.temperature}°C`);
     if (r.color) parts.push(r.color);
