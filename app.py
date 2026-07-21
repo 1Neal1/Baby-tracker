@@ -243,11 +243,11 @@ def init_db():
             )
 
     db.commit()
-
     _migrate_check_constraints(db)
 
 
 def _migrate_check_constraints(db):
+    # 迁移 records 表 - 移除 CHECK 约束以支持 sleep 类型
     try:
         schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='records'").fetchone()
         if schema and 'CHECK' in schema['sql']:
@@ -761,10 +761,18 @@ def quick_record(btn_id):
     # 前端传来的本地日期，用于概览查询，避免时区差异
     target_date = data.get('date')
 
+    # 处理睡眠记录：前端可能传入 duration 和 note
+    duration = data.get('duration')  # 预设时长（分钟）
+    note = data.get('note', '')
+
     cursor = db.execute(
-        """INSERT INTO records (baby_id, user_id, type, sub_type, amount, timestamp)
-           VALUES (1, ?, ?, ?, ?, ?)""",
-        (u['id'], btn['type'], btn['sub_type'], btn['amount'] if btn['amount'] is not None else None, timestamp)
+        """INSERT INTO records (baby_id, user_id, type, sub_type, amount, duration, note, timestamp)
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?)""",
+        (u['id'], btn['type'], btn['sub_type'], 
+         btn['amount'] if btn['amount'] is not None else None,
+         duration if duration is not None else None,
+         note if note else '',
+         timestamp)
     )
     db.commit()
     add_log('快速记录', 'record', cursor.lastrowid, f"{btn['label']} @ {timestamp}")
@@ -807,7 +815,7 @@ def get_records():
     except ValueError:
         return jsonify({'error': '日期格式无效，需 YYYY-MM-DD'}), 400
     rec_type = request.args.get('type', None)
-    if rec_type and rec_type not in ('feed', 'excrete', 'symptom', 'supplement'):
+    if rec_type and rec_type not in ('feed', 'excrete', 'symptom', 'supplement', 'sleep'):
         return jsonify({'error': '无效的记录类型'}), 400
     start = f"{rec_date} 00:00:00"
     end = f"{rec_date} 23:59:59"
@@ -833,7 +841,7 @@ def create_record():
     data = request.get_json()
     if not data or 'type' not in data or 'sub_type' not in data:
         return jsonify({'error': '缺少必填字段'}), 400
-    if data['type'] not in ('feed', 'excrete', 'symptom', 'supplement'):
+    if data['type'] not in ('feed', 'excrete', 'symptom', 'supplement', 'sleep'):
         return jsonify({'error': '无效的记录类型'}), 400
 
     u = current_user()
@@ -870,7 +878,7 @@ def update_record(record_id):
         return jsonify({'error': '记录不存在'}), 404
 
     data = request.get_json()
-    if data.get('type') and data['type'] not in ('feed', 'excrete', 'symptom', 'supplement'):
+    if data.get('type') and data['type'] not in ('feed', 'excrete', 'symptom', 'supplement', 'sleep'):
         return jsonify({'error': '无效的记录类型'}), 400
 
     # 前端传来的本地日期，用于概览查询
@@ -946,57 +954,44 @@ def _today_summary_data(db, target_date=None):
     all_feeds = [r for r in today_records if r['type'] == 'feed']
     excretes = [r for r in today_records if r['type'] == 'excrete']
 
-    # ── 母乳左右合并逻辑 ──────────────────────────────────
-    # 规则：母乳(左)和母乳(右)在 30 分钟内视为同一次喂养
-    BREAST_MERGE_WINDOW = 30  # 分钟
+    # ── 母乳左右合并逻辑（30分钟窗口） ──────────────────
+    BREAST_MERGE_WINDOW = 30
 
     def is_breast_record(r):
         return r['sub_type'] in ('breast_left', 'breast_right')
 
-    # 分离母乳记录和非母乳记录
     breast_feeds = [r for r in all_feeds if is_breast_record(r)]
     other_feeds = [r for r in all_feeds if not is_breast_record(r)]
 
-    # 按时间排序母乳记录
     breast_feeds.sort(key=lambda r: r['timestamp'])
 
-    # 合并母乳记录
     merged_breast_feeds = []
     i = 0
     while i < len(breast_feeds):
         current = breast_feeds[i]
-        # 复制当前记录，合并奶量
         merged = dict(current)
         merged_amount = current['amount'] or 0
         
-        # 检查后续记录是否在合并窗口内
         j = i + 1
         current_time = datetime.strptime(current['timestamp'], '%Y-%m-%d %H:%M:%S')
         
         while j < len(breast_feeds):
             next_time = datetime.strptime(breast_feeds[j]['timestamp'], '%Y-%m-%d %H:%M:%S')
-            time_diff = (next_time - current_time).total_seconds() / 60  # 分钟
+            time_diff = (next_time - current_time).total_seconds() / 60
             
             if time_diff <= BREAST_MERGE_WINDOW:
-                # 合并奶量
                 merged_amount += (breast_feeds[j]['amount'] or 0)
-                # 更新时间为最后一条记录的时间
                 merged['timestamp'] = breast_feeds[j]['timestamp']
                 j += 1
             else:
                 break
         
-        # 保存合并后的记录
         merged['amount'] = merged_amount
         merged_breast_feeds.append(merged)
         i = j
 
-    # 合并所有喂养记录：非母乳记录 + 合并后的母乳记录
     feeds = other_feeds + merged_breast_feeds
-    
-    # 按时间排序
     feeds.sort(key=lambda r: r['timestamp'])
-    # ── 合并逻辑结束 ──────────────────────────────────────
 
     total_feed_ml = sum(f['amount'] or 0 for f in feeds)
     feed_count = len(feeds)
@@ -1021,7 +1016,7 @@ def _today_summary_data(db, target_date=None):
     last_feed = feeds[-1] if feeds else None
     last_feed_time = last_feed['timestamp'] if last_feed else None
 
-    recent = db.execute("SELECT * FROM records ORDER BY timestamp DESC LIMIT 5").fetchall()
+    recent = db.execute("SELECT * FROM records WHERE type IN ('feed', 'excrete', 'symptom', 'supplement', 'sleep') ORDER BY timestamp DESC LIMIT 5").fetchall()
 
     buttons = []
     if is_approved():
@@ -1256,12 +1251,13 @@ def export_csv():
     output = StringIO()
     writer = csv.writer(output)
     # 中文列名 + 中文类型映射
-    type_map = {'feed': '喂养', 'excrete': '排泄', 'symptom': '症状', 'supplement': '补充'}
+    type_map = {'feed': '喂养', 'excrete': '排泄', 'symptom': '症状', 'supplement': '补充', 'sleep': '睡眠'}
     sub_map = {
         'breast_left': '母乳(左)', 'breast_right': '母乳(右)', 'formula': '配方奶', 'water': '水',
         'urine': '尿', 'stool': '便', 'both': '尿+便',
         'vomit': '呕吐', 'fever': '发热', 'jaundice': '黄疸', 'rash': '皮疹',
         'vitamin_d': '维D', 'vitamin_ad': '维AD', 'iron': '铁剂', 'calcium': '钙剂', 'dha': 'DHA', 'probiotics': '益生菌',
+        'deep': '熟睡', 'light': '眯眯眼',
     }
     writer.writerow(['ID', '类型', '子类型', '量(ml)', '时长(分)', '颜色', '性状', '体温', '备注', '时间'])
     for r in rows:
@@ -1481,6 +1477,61 @@ def update_weight_log(log_id):
     return jsonify({'message': '已更新'})
 
 
+# ── API: Sleep Records ─────────────────────────────────────
+
+@app.route('/api/sleep/records', methods=['GET'])
+@login_required
+def get_sleep_records():
+    """获取睡眠记录"""
+    db = get_db()
+    days = request.args.get('days', 30, type=int)
+    days = min(days, 90)
+    start_date = (date.today() - timedelta(days=days-1)).isoformat()
+    
+    rows = db.execute("""
+        SELECT id, baby_id, user_id, type, sub_type, amount, duration, note, timestamp, created_at
+        FROM records
+        WHERE type = 'sleep' AND timestamp >= ?
+        ORDER BY timestamp DESC
+    """, (start_date,)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/sleep/trends', methods=['GET'])
+@login_required
+def get_sleep_trends():
+    """获取睡眠趋势数据"""
+    db = get_db()
+    days = request.args.get('days', 14, type=int)
+    days = min(days, 90)
+    start_date = (date.today() - timedelta(days=days-1)).isoformat()
+    
+    rows = db.execute("""
+        SELECT date(timestamp) as d, SUM(duration) as total_minutes, COUNT(*) as sleep_count
+        FROM records
+        WHERE type = 'sleep' AND timestamp >= ?
+        GROUP BY date(timestamp) ORDER BY d
+    """, (start_date,)).fetchall()
+    
+    sleep_map = {r['d']: dict(r) for r in rows}
+    
+    daily_data = []
+    for i in range(days):
+        d = (date.today() - timedelta(days=days-1-i)).isoformat()
+        data = sleep_map.get(d, {'total_minutes': 0, 'sleep_count': 0})
+        daily_data.append({
+            'date': d,
+            'total_minutes': data.get('total_minutes', 0),
+            'sleep_count': data.get('sleep_count', 0),
+            'total_hours': round(data.get('total_minutes', 0) / 60, 1)
+        })
+    
+    return jsonify({
+        'daily': daily_data,
+        'days': days
+    })
+
+
 # ── API: Statistics ───────────────────────────────────────
 
 @app.route('/api/stats/trends', methods=['GET'])
@@ -1506,16 +1557,14 @@ def get_trends():
     """, (start_date.isoformat(),)).fetchall()
 
     # ── 母乳左右合并逻辑（30分钟窗口） ──────────────────
-    BREAST_MERGE_WINDOW = 30  # 分钟
+    BREAST_MERGE_WINDOW = 30
 
     def is_breast_record(r):
         return r['sub_type'] in ('breast_left', 'breast_right')
 
-    # 分离母乳记录和非母乳记录
     breast_feeds = [r for r in all_feed_records if is_breast_record(r)]
     other_feeds = [r for r in all_feed_records if not is_breast_record(r)]
 
-    # 合并母乳记录（按时间排序）
     breast_feeds.sort(key=lambda r: r['timestamp'])
 
     merged_breast_feeds = []
@@ -1543,21 +1592,18 @@ def get_trends():
         merged_breast_feeds.append(merged)
         i = j
 
-    # 合并所有喂养记录
     feeds = other_feeds + merged_breast_feeds
     feeds.sort(key=lambda r: r['timestamp'])
-    # ── 合并逻辑结束 ──────────────────────────────────────
 
     # ── 每日喂养量（使用合并后的数据） ────────────────────
     feed_daily = {}
     for r in feeds:
-        date_key = r['timestamp'][:10]  # 取日期部分
+        date_key = r['timestamp'][:10]
         if date_key not in feed_daily:
             feed_daily[date_key] = {'total_ml': 0, 'feed_count': 0}
         feed_daily[date_key]['total_ml'] += (r['amount'] or 0)
         feed_daily[date_key]['feed_count'] += 1
 
-    # 填充空白天（按日期排序）
     daily_data = []
     for i in range(days):
         d = (start_date + timedelta(days=i)).isoformat()
@@ -1585,7 +1631,6 @@ def get_trends():
         except (ValueError, TypeError):
             pass
 
-    # 转换为列表格式
     feed_hours_list = [{'hour': h, 'count': feed_hours.get(h, 0)} for h in range(24)]
     
     feed_hours_by_day_list = []
@@ -1598,7 +1643,7 @@ def get_trends():
             })
     feed_hours_by_day_list.sort(key=lambda x: (x['date'], x['hour']))
 
-    # ── 排泄趋势（不需要合并，直接统计） ──────────────────
+    # ── 排泄趋势 ──────────────────────────────────────────
     excrete_daily = db.execute("""
         SELECT date(timestamp) as d,
                SUM(CASE WHEN sub_type IN ('urine','both') THEN 1 ELSE 0 END) as urine_count,
@@ -1610,13 +1655,12 @@ def get_trends():
 
     excrete_map = {r['d']: dict(r) for r in excrete_daily}
 
-    # 合并排泄数据到 daily_data
     for item in daily_data:
         ex = excrete_map.get(item['date'], {})
         item['urine_count'] = ex.get('urine_count', 0)
         item['stool_count'] = ex.get('stool_count', 0)
 
-    # ── 体重记录（独立时间范围，最大1年） ──────────────────
+    # ── 体重记录 ──────────────────────────────────────────
     weights = db.execute("""
         SELECT id, weight, recorded_date, note FROM weight_logs
         WHERE recorded_date >= ?
@@ -1639,6 +1683,7 @@ def get_trends():
         'days': days,
         'weight_days': weight_days,
     })
+
 
 # ── Vaccine Schedule (2024 国家免疫规划) ──────────────────
 
@@ -2490,9 +2535,10 @@ def _ha_do_press(btn_id):
         }
     })
 
+
 # ── API: Timer State (母乳计时) ────────────────────────────
 
-_timer_states = {}  # {key: {'is_running': bool, 'start_time': float, 'label': str, 'user_id': int, 'btn_id': int}}
+_timer_states = {}
 
 @app.route('/api/timer/state/<int:btn_id>', methods=['GET'])
 @login_required
@@ -2543,7 +2589,6 @@ def timer_start():
     u = current_user()
     key = f"{u['id']}_{btn_id}"
     
-    # 如果已存在计时状态，先清除
     if key in _timer_states:
         del _timer_states[key]
     
@@ -2581,7 +2626,6 @@ def timer_stop():
     duration_seconds = int(time.time() - start_time)
     label = state.get('label', '')
     
-    # 清除计时状态
     del _timer_states[key]
     
     add_log('停止计时', 'timer', btn_id, f"{label} 计时 {duration_seconds}秒")
@@ -2611,6 +2655,7 @@ def timer_clear():
         add_log('清除计时', 'timer', btn_id, f"{label} 计时已清除")
     
     return jsonify({'message': '已清除'})
+
 
 # ── PWA Icon Generation ──────────────────────────────────
 
