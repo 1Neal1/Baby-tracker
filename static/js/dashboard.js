@@ -330,7 +330,6 @@ async function submitBreastRecord(btnId, label, btnInfo, timestamp, durationSeco
         amount: btnInfo.amount || 0,
         duration: durationSeconds,
         timestamp: timestamp,
-        note: '母乳计时',
         _date: getLocalDate()
     };
     return await api('/api/records', {
