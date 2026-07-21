@@ -7,11 +7,6 @@ const SUB_TYPES = {
         { value: 'water', label: '水' },
         { value: '_custom', label: '自定义...' },
     ],
-        sleep: [
-        { value: 'deep', label: '熟睡' },
-        { value: 'light', label: '眯眯眼' },
-        { value: '_custom', label: '自定义...' },
-    ],
     excrete: [
         { value: 'urine', label: '尿' },
         { value: 'stool', label: '便' },
@@ -31,6 +26,11 @@ const SUB_TYPES = {
         { value: 'calcium', label: '钙剂' },
         { value: 'dha', label: 'DHA' },
         { value: 'probiotics', label: '益生菌' },
+        { value: '_custom', label: '自定义...' },
+    ],
+    sleep: [
+        { value: 'deep', label: '熟睡' },
+        { value: 'light', label: '眯眯眼' },
         { value: '_custom', label: '自定义...' },
     ]
 };
