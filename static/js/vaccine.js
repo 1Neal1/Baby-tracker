@@ -1013,14 +1013,16 @@ function renderRecords(records, vaccineData, healthData, countdownList, dateStr)
                         try {
                             const startDate = new Date(r.timestamp.replace(' ', 'T'));
                             startTimeStr = formatTime(r.timestamp);
-                            const endDate = new Date(startDate.getTime() + r.duration * 60000);
+                            const endDate = new Date(startDate.getTime() + r.duration * 1000); // duration 是秒
                             endTimeStr = formatTime(endDate.toISOString().replace('T', ' '));
                         } catch (e) {
                             // ignore
                         }
                     }
-                    const hours = Math.floor(r.duration / 60);
-                    const mins = r.duration % 60;
+                    // 显示时长：秒转换为分钟
+                    const totalMinutes = Math.floor(r.duration / 60);
+                    const hours = Math.floor(totalMinutes / 60);
+                    const mins = totalMinutes % 60;
                     let durationStr = '';
                     if (hours > 0 && mins > 0) {
                         durationStr = `${hours}小时${mins}分钟`;
