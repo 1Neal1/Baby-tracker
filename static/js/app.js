@@ -265,7 +265,7 @@ function _showEditModal(r) {
             </div>
             <div>
                 <label class="text-text-muted text-xs mb-1 block">结束时间</label>
-                <input type="time" id="edit-end-time" class="input-field font-mono" value="${esc(endTimePart)}" readonly style="background:var(--c-border);opacity:0.7;">
+                <input type="time" id="edit-end-time" class="input-field font-mono" value="${esc(endTimePart)}" onchange="_updateDurationFromEndTime()" oninput="_updateDurationFromEndTime()">
             </div>
             <div>
                 <label class="text-text-muted text-xs mb-1 block">颜色</label>
@@ -300,7 +300,7 @@ function _showEditModal(r) {
     _onEditTypeChange();
 }
 
-// 新增：根据开始时间和时长计算结束时间
+// 根据开始时间和时长计算结束时间
 function _updateEndTimeFromDuration() {
     const startTimeInput = document.getElementById('edit-start-time');
     const dateInput = document.getElementById('edit-date');
@@ -324,7 +324,7 @@ function _updateEndTimeFromDuration() {
     }
 }
 
-// 新增：根据开始时间变化更新结束时间
+// 根据开始时间变化更新结束时间
 function _updateEndTimeFromStart() {
     const startTimeInput = document.getElementById('edit-start-time');
     const dateInput = document.getElementById('edit-date');
@@ -345,6 +345,37 @@ function _updateEndTimeFromStart() {
         }
     } else {
         endTimeInput.value = '';
+    }
+}
+
+// 新增：根据结束时间计算时长
+function _updateDurationFromEndTime() {
+    const startTimeInput = document.getElementById('edit-start-time');
+    const dateInput = document.getElementById('edit-date');
+    const durationInput = document.getElementById('edit-duration');
+    const endTimeInput = document.getElementById('edit-end-time');
+    if (!startTimeInput || !dateInput || !durationInput || !endTimeInput) return;
+    
+    const dateVal = dateInput.value;
+    const startVal = startTimeInput.value;
+    const endVal = endTimeInput.value;
+    
+    if (dateVal && startVal && endVal) {
+        try {
+            const startDateTime = new Date(`${dateVal}T${startVal}`);
+            const endDateTime = new Date(`${dateVal}T${endVal}`);
+            if (endDateTime > startDateTime) {
+                const diffMinutes = Math.round((endDateTime - startDateTime) / 60000);
+                if (diffMinutes > 0) {
+                    durationInput.value = diffMinutes;
+                }
+            } else {
+                // 如果结束时间小于开始时间，可能是跨天，清空时长
+                durationInput.value = '';
+            }
+        } catch (e) {
+            durationInput.value = '';
+        }
     }
 }
 
@@ -410,15 +441,22 @@ async function _saveEditRecord(id) {
     const durationVal = document.getElementById('edit-duration').value;
     const duration = durationVal ? parseInt(durationVal) : null;
     
+    // 获取备注：如果是睡眠记录，强制留空
+    const type = document.getElementById('edit-type').value;
+    let note = document.getElementById('edit-note').value || '';
+    if (type === 'sleep') {
+        note = '';
+    }
+    
     const data = {
-        type: document.getElementById('edit-type').value,
+        type: type,
         sub_type: subType,
         amount: document.getElementById('edit-amount').value ? parseFloat(document.getElementById('edit-amount').value) : null,
         duration: duration,
         color: document.getElementById('edit-color').value,
         consistency: document.getElementById('edit-consistency').value,
         temperature: document.getElementById('edit-temperature').value ? parseFloat(document.getElementById('edit-temperature').value) : null,
-        note: document.getElementById('edit-note').value || '',
+        note: note,
         timestamp: timestamp,
         _date: getLocalDate(),
     };
