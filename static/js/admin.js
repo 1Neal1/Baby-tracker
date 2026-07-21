@@ -7,6 +7,11 @@ const SUB_TYPES = {
         { value: 'water', label: '水' },
         { value: '_custom', label: '自定义...' },
     ],
+        sleep: [
+        { value: 'deep', label: '熟睡' },
+        { value: 'light', label: '眯眯眼' },
+        { value: '_custom', label: '自定义...' },
+    ]
     excrete: [
         { value: 'urine', label: '尿' },
         { value: 'stool', label: '便' },
@@ -27,7 +32,7 @@ const SUB_TYPES = {
         { value: 'dha', label: 'DHA' },
         { value: 'probiotics', label: '益生菌' },
         { value: '_custom', label: '自定义...' },
-    ]
+    ],
 };
 
 let _adminEventsInit = false;
@@ -156,8 +161,8 @@ function renderButtons(buttons) {
         return;
     }
 
-    const typeLabels = { feed: '喂养', excrete: '排泄', symptom: '症状', supplement: '补充' };
-    const typeColors = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400' };
+    const typeLabels = { feed: '喂养', excrete: '排泄', symptom: '症状', supplement: '补充', sleep: '睡眠' };
+    const typeColors = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400', sleep: 'text-indigo-400' };
 
     container.innerHTML = buttons.map((b, i) => `
         <div class="flex items-center gap-3 py-2 px-3 rounded-lg bg-base border border-border ${b.is_active ? '' : 'opacity-40'}">
@@ -173,7 +178,7 @@ function renderButtons(buttons) {
                 <div class="flex items-center gap-2">
                     <span class="text-sm text-text-primary">${esc(b.label)}</span>
                     <span class="text-xs ${typeColors[b.type]}">${typeLabels[b.type]}</span>
-                    ${b.amount ? `<span class="text-xs text-text-muted font-mono">${b.amount}ml</span>` : ''}
+                    ${b.amount ? `<span class="text-xs text-text-muted font-mono">${b.amount}${b.type === 'sleep' ? '分钟' : 'ml'}</span>` : ''}
                 </div>
                 <p class="text-xs text-text-muted">排序: ${b.sort_order} · ${b.is_active ? '启用' : '禁用'}</p>
             </div>
@@ -199,15 +204,12 @@ async function toggleButton(id, isActive) {
 }
 
 async function moveButton(id, direction) {
-    // direction: -1 上移, +1 下移
     const buttons = await api('/api/quick-buttons');
     const idx = buttons.findIndex(b => b.id === id);
     if (idx < 0) return;
     const targetIdx = idx + direction;
     if (targetIdx < 0 || targetIdx >= buttons.length) return;
-    // 交换位置
     [buttons[idx], buttons[targetIdx]] = [buttons[targetIdx], buttons[idx]];
-    // 提交新的排序
     await api('/api/quick-buttons/reorder', {
         method: 'POST',
         body: JSON.stringify({ ids: buttons.map(b => b.id) })
@@ -654,8 +656,8 @@ function renderHaButtonChecks() {
         container.innerHTML = '<p class="text-[10px] text-text-muted">暂无启用的快速记录按钮</p>';
         return;
     }
-    const typeLabels = { feed: '喂养', excrete: '排泄', symptom: '症状', supplement: '补充' };
-    const typeColors = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400' };
+    const typeLabels = { feed: '喂养', excrete: '排泄', symptom: '症状', supplement: '补充', sleep: '睡眠' };
+    const typeColors = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400', sleep: 'text-indigo-400' };
     container.innerHTML = _haButtons.map(b => `
         <label class="flex items-center gap-2 py-1 cursor-pointer">
             <input type="checkbox" class="ha-entity accent-accent" data-type="switch" data-id="${b.id}" data-label="${esc(b.label)}" checked>
