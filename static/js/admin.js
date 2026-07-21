@@ -151,7 +151,13 @@ async function loadButtons() {
         const buttons = await api('/api/quick-buttons');
         _cachedButtons = buttons;
         renderButtons(buttons);
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+        console.error('加载按钮失败:', e);
+        const container = document.getElementById('buttons-list');
+        if (container) {
+            container.innerHTML = `<p class="text-red-400 text-sm text-center py-4">加载失败: ${esc(e.message)}</p>`;
+        }
+    }
 }
 
 function renderButtons(buttons) {
