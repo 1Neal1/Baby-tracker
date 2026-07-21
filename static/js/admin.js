@@ -11,7 +11,7 @@ const SUB_TYPES = {
         { value: 'deep', label: '熟睡' },
         { value: 'light', label: '眯眯眼' },
         { value: '_custom', label: '自定义...' },
-    ]
+    ],
     excrete: [
         { value: 'urine', label: '尿' },
         { value: 'stool', label: '便' },
@@ -32,7 +32,7 @@ const SUB_TYPES = {
         { value: 'dha', label: 'DHA' },
         { value: 'probiotics', label: '益生菌' },
         { value: '_custom', label: '自定义...' },
-    ],
+    ]
 };
 
 let _adminEventsInit = false;
