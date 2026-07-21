@@ -200,8 +200,6 @@ async function handleSleepQuickRecord(btnId, label) {
         const startTime = new Date(now.getTime());
         const endTime = new Date(now.getTime() + presetMinutes * 60000);
         const timestamp = formatDateTimeForAPI(startTime);
-        const endTimeStr = formatDateTimeForAPI(endTime);
-        const startTimeStr = formatDateTimeForAPI(startTime);
         
         const recordData = {
             type: 'sleep',
@@ -209,7 +207,7 @@ async function handleSleepQuickRecord(btnId, label) {
             amount: 0,
             duration: presetMinutes,
             timestamp: timestamp,
-            note: `开始: ${startTimeStr} · 结束: ${endTimeStr} · 时长: ${presetMinutes}分钟`,
+            note: '',  // 备注留空
             _date: getLocalDate()
         };
         
