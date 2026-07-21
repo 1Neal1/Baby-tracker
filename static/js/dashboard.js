@@ -148,48 +148,101 @@ function renderQuickButtons(buttons) {
         if (isBreastBtn && cachedState && cachedState.isRunning) {
             btnLabel = '⏱ 停止';
         }
+        // 存储完整的按钮数据到 dataset，避免依赖外部数据
         html += `
         <button class="quick-btn flex flex-col items-center gap-1 p-3 rounded-xl border ${typeBorders[btn.type] || typeBorders.symptom} bg-surface hover:bg-white/5 active:scale-95 transition-all duration-150 cursor-pointer"
-                data-btn-id="${btn.id}" data-btn-label="${esc(btn.label)}" data-is-breast="${isBreastBtn ? 'true' : 'false'}" data-btn-type="${esc(btn.type)}" data-btn-amount="${btn.amount || 0}">
+                data-btn-id="${btn.id}" 
+                data-btn-label="${esc(btn.label)}" 
+                data-is-breast="${isBreastBtn ? 'true' : 'false'}" 
+                data-btn-type="${esc(btn.type)}" 
+                data-btn-amount="${btn.amount || 0}"
+                data-btn-sub-type="${esc(btn.sub_type)}">
             <i data-lucide="${typeIcons[btn.type] || typeIcons.symptom}" class="w-5 h-5 ${typeColors[btn.type] || typeColors.symptom}"></i>
             <span class="text-xs text-text-secondary">${btnLabel}</span>
         </button>`;
     }
     container.innerHTML = html;
 
-    if (!container.dataset.delegateBound) {
-        container.addEventListener('click', e => {
+    // 移除旧的事件监听，重新绑定（使用新的事件委托）
+    // 先移除旧的监听器（通过替换 DOM 元素来清除）
+    const newContainer = container.cloneNode(true);
+    container.parentNode.replaceChild(newContainer, container);
+    
+    // 重新获取新的容器并绑定事件
+    const newContainerRef = document.getElementById('quick-buttons');
+    if (newContainerRef) {
+        newContainerRef.addEventListener('click', function(e) {
             const btn = e.target.closest('.quick-btn');
             if (!btn) return;
+            
+            // 直接从 dataset 读取所有数据
             const btnId = parseInt(btn.dataset.btnId);
             const label = btn.dataset.btnLabel;
             const isBreast = btn.dataset.isBreast === 'true';
             const btnType = btn.dataset.btnType;
+            const btnSubType = btn.dataset.btnSubType;
+            const btnAmount = parseFloat(btn.dataset.btnAmount) || 0;
+            
+            // 构建按钮信息对象
+            const btnInfo = {
+                id: btnId,
+                label: label,
+                type: btnType,
+                sub_type: btnSubType,
+                amount: btnAmount
+            };
             
             if (isBreast) {
                 handleBreastButtonClick(btnId, label);
             } else if (btnType === 'sleep') {
                 handleSleepQuickRecord(btnId, label);
             } else {
-                quickRecord(btnId, label);
+                quickRecordWithInfo(btnInfo);
             }
         });
-        container.dataset.delegateBound = 'true';
     }
 
     lucide.createIcons();
 }
 
+async function quickRecordWithInfo(btnInfo) {
+    try {
+        const now = new Date();
+        const timestamp = formatDateTimeForAPI(now);
+        // 使用传入的 btnInfo 而不是从 dashboardData 查找
+        const data = await api(`/api/quick-record/${btnInfo.id}`, { 
+            method: 'POST', 
+            body: JSON.stringify({ 
+                timestamp, 
+                date: getLocalDate(),
+                // 传递按钮类型信息，确保后端正确记录
+                type: btnInfo.type,
+                sub_type: btnInfo.sub_type,
+                amount: btnInfo.amount
+            }) 
+        });
+        showToast(`${btnInfo.label} - 记录成功`);
+        dashboardData = data;
+        renderDashboard(data);
+        await restoreTimerStatesFromServer();
+    } catch (e) {
+        showToast(e.message);
+    }
+}
 // ── 睡眠快速记录 ────────────────────────────────────────────
 
 async function handleSleepQuickRecord(btnId, label) {
-    const btnInfo = dashboardData.quick_buttons.find(b => b.id === btnId);
-    if (!btnInfo) {
+    // 直接从按钮元素获取数据，避免依赖 dashboardData
+    const btn = document.querySelector(`.quick-btn[data-btn-id="${btnId}"]`);
+    if (!btn) {
         showToast('按钮信息未找到');
         return;
     }
     
-    const presetMinutes = btnInfo.amount || 0;
+    const btnSubType = btn.dataset.btnSubType;
+    const btnAmount = parseFloat(btn.dataset.btnAmount) || 0;
+    const presetMinutes = btnAmount;
+    
     if (presetMinutes <= 0) {
         showToast('请先设置睡眠时长（预设量）');
         return;
@@ -203,7 +256,7 @@ async function handleSleepQuickRecord(btnId, label) {
         
         const recordData = {
             type: 'sleep',
-            sub_type: btnInfo.sub_type,
+            sub_type: btnSubType,
             amount: 0,
             duration: presetMinutes * 60,  // 转换为秒存储
             timestamp: timestamp,
@@ -301,13 +354,18 @@ async function stopTimerAndRecord(btnId, label) {
         const startDate = new Date(serverStartTime * 1000);
         const timestamp = formatDateTimeForAPI(startDate);
         
-        const btnInfo = findButtonInfo(btnId);
-        if (!btnInfo) {
+        // 从 DOM 元素获取按钮数据
+        const btn = document.querySelector(`.quick-btn[data-btn-id="${btnId}"]`);
+        if (!btn) {
             showToast('按钮信息未找到');
             return;
         }
         
-        await submitBreastRecord(btnId, label, btnInfo, timestamp, durationSeconds);
+        const btnType = btn.dataset.btnType;
+        const btnSubType = btn.dataset.btnSubType;
+        const btnAmount = parseFloat(btn.dataset.btnAmount) || 0;
+        
+        await submitBreastRecord(btnId, label, btnType, btnSubType, btnAmount, timestamp, durationSeconds);
         
         const timeStr = formatDurationToChinese(durationSeconds);
         showToast(`${label} - 记录成功 (${timeStr})`);
@@ -321,14 +379,14 @@ async function stopTimerAndRecord(btnId, label) {
     }
 }
 
-async function submitBreastRecord(btnId, label, btnInfo, timestamp, durationSeconds) {
+async function submitBreastRecord(btnId, label, btnType, btnSubType, btnAmount, timestamp, durationSeconds) {
     const recordData = {
-        type: btnInfo.type,
-        sub_type: btnInfo.sub_type,
-        amount: btnInfo.amount || 0,
-        duration: durationSeconds,  // 已经是秒
+        type: btnType,
+        sub_type: btnSubType,
+        amount: btnAmount,
+        duration: durationSeconds,
         timestamp: timestamp,
-        note: '',
+        note: '',  // 备注留空
         _date: getLocalDate()
     };
     return await api('/api/records', {
@@ -521,16 +579,25 @@ async function restoreTimerStatesFromServer() {
 }
 
 async function quickRecord(btnId, label) {
-    try {
-        const now = new Date();
-        const timestamp = formatDateTimeForAPI(now);
-        const data = await api(`/api/quick-record/${btnId}`, { method: 'POST', body: JSON.stringify({ timestamp, date: getLocalDate() }) });
-        showToast(`${label} - 记录成功`);
-        dashboardData = data;
-        renderDashboard(data);
-        await restoreTimerStatesFromServer();
-    } catch (e) {
-        showToast(e.message);
+    // 从 dashboardData 查找按钮信息
+    const btnInfo = dashboardData.quick_buttons.find(b => b.id === btnId);
+    if (btnInfo) {
+        await quickRecordWithInfo(btnInfo);
+    } else {
+        try {
+            const now = new Date();
+            const timestamp = formatDateTimeForAPI(now);
+            const data = await api(`/api/quick-record/${btnId}`, { 
+                method: 'POST', 
+                body: JSON.stringify({ timestamp, date: getLocalDate() }) 
+            });
+            showToast(`${label} - 记录成功`);
+            dashboardData = data;
+            renderDashboard(data);
+            await restoreTimerStatesFromServer();
+        } catch (e) {
+            showToast(e.message);
+        }
     }
 }
 
