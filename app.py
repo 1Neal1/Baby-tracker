@@ -1497,17 +1497,108 @@ def get_trends():
     start_date = today - timedelta(days=days-1)
     weight_start = today - timedelta(days=weight_days-1)
 
-    # 每日喂养量
-    feed_daily = db.execute("""
-        SELECT date(timestamp) as d,
-               COALESCE(SUM(amount), 0) as total_ml,
-               COUNT(*) as feed_count
+    # ── 获取所有喂养记录（用于合并母乳左右） ──────────────
+    all_feed_records = db.execute("""
+        SELECT id, baby_id, user_id, type, sub_type, amount, duration, color, consistency, temperature, note, timestamp, created_at
         FROM records
         WHERE type='feed' AND timestamp >= ?
-        GROUP BY date(timestamp) ORDER BY d
+        ORDER BY timestamp
     """, (start_date.isoformat(),)).fetchall()
 
-    # 每日排泄次数
+    # ── 母乳左右合并逻辑（30分钟窗口） ──────────────────
+    BREAST_MERGE_WINDOW = 30  # 分钟
+
+    def is_breast_record(r):
+        return r['sub_type'] in ('breast_left', 'breast_right')
+
+    # 分离母乳记录和非母乳记录
+    breast_feeds = [r for r in all_feed_records if is_breast_record(r)]
+    other_feeds = [r for r in all_feed_records if not is_breast_record(r)]
+
+    # 合并母乳记录（按时间排序）
+    breast_feeds.sort(key=lambda r: r['timestamp'])
+
+    merged_breast_feeds = []
+    i = 0
+    while i < len(breast_feeds):
+        current = breast_feeds[i]
+        merged = dict(current)
+        merged_amount = current['amount'] or 0
+
+        j = i + 1
+        current_time = datetime.strptime(current['timestamp'], '%Y-%m-%d %H:%M:%S')
+
+        while j < len(breast_feeds):
+            next_time = datetime.strptime(breast_feeds[j]['timestamp'], '%Y-%m-%d %H:%M:%S')
+            time_diff = (next_time - current_time).total_seconds() / 60
+
+            if time_diff <= BREAST_MERGE_WINDOW:
+                merged_amount += (breast_feeds[j]['amount'] or 0)
+                merged['timestamp'] = breast_feeds[j]['timestamp']
+                j += 1
+            else:
+                break
+
+        merged['amount'] = merged_amount
+        merged_breast_feeds.append(merged)
+        i = j
+
+    # 合并所有喂养记录
+    feeds = other_feeds + merged_breast_feeds
+    feeds.sort(key=lambda r: r['timestamp'])
+    # ── 合并逻辑结束 ──────────────────────────────────────
+
+    # ── 每日喂养量（使用合并后的数据） ────────────────────
+    feed_daily = {}
+    for r in feeds:
+        date_key = r['timestamp'][:10]  # 取日期部分
+        if date_key not in feed_daily:
+            feed_daily[date_key] = {'total_ml': 0, 'feed_count': 0}
+        feed_daily[date_key]['total_ml'] += (r['amount'] or 0)
+        feed_daily[date_key]['feed_count'] += 1
+
+    # 填充空白天（按日期排序）
+    daily_data = []
+    for i in range(days):
+        d = (start_date + timedelta(days=i)).isoformat()
+        day_data = feed_daily.get(d, {'total_ml': 0, 'feed_count': 0})
+        daily_data.append({
+            'date': d,
+            'feed_ml': round(day_data['total_ml']),
+            'feed_count': day_data['feed_count'],
+        })
+
+    # ── 喂养时段分布（使用合并后的数据） ──────────────────
+    feed_hours = {}
+    feed_hours_by_day = {}
+    for r in feeds:
+        try:
+            dt = datetime.strptime(r['timestamp'], '%Y-%m-%d %H:%M:%S')
+            hour = dt.hour
+            date_key = r['timestamp'][:10]
+            
+            feed_hours[hour] = feed_hours.get(hour, 0) + 1
+            
+            if date_key not in feed_hours_by_day:
+                feed_hours_by_day[date_key] = {}
+            feed_hours_by_day[date_key][hour] = feed_hours_by_day[date_key].get(hour, 0) + 1
+        except (ValueError, TypeError):
+            pass
+
+    # 转换为列表格式
+    feed_hours_list = [{'hour': h, 'count': feed_hours.get(h, 0)} for h in range(24)]
+    
+    feed_hours_by_day_list = []
+    for date_key, hours_dict in feed_hours_by_day.items():
+        for hour, count in hours_dict.items():
+            feed_hours_by_day_list.append({
+                'date': date_key,
+                'hour': hour,
+                'count': count
+            })
+    feed_hours_by_day_list.sort(key=lambda x: (x['date'], x['hour']))
+
+    # ── 排泄趋势（不需要合并，直接统计） ──────────────────
     excrete_daily = db.execute("""
         SELECT date(timestamp) as d,
                SUM(CASE WHEN sub_type IN ('urine','both') THEN 1 ELSE 0 END) as urine_count,
@@ -1517,63 +1608,37 @@ def get_trends():
         GROUP BY date(timestamp) ORDER BY d
     """, (start_date.isoformat(),)).fetchall()
 
-    # 喂养时段分布
-    feed_hours = db.execute("""
-        SELECT CAST(strftime('%H', timestamp) AS INTEGER) as hour,
-               COUNT(*) as count
-        FROM records
-        WHERE type='feed' AND timestamp >= ?
-        GROUP BY hour ORDER BY hour
-    """, (start_date.isoformat(),)).fetchall()
+    excrete_map = {r['d']: dict(r) for r in excrete_daily}
 
-    feed_hours_by_day = db.execute("""
-        SELECT DATE(timestamp) as date,
-               CAST(strftime('%H', timestamp) AS INTEGER) as hour,
-               COUNT(*) as count
-        FROM records
-        WHERE type='feed' AND timestamp >= ?
-        GROUP BY date, hour ORDER BY date, hour
-    """, (start_date.isoformat(),)).fetchall()
+    # 合并排泄数据到 daily_data
+    for item in daily_data:
+        ex = excrete_map.get(item['date'], {})
+        item['urine_count'] = ex.get('urine_count', 0)
+        item['stool_count'] = ex.get('stool_count', 0)
 
-    # 体重记录（独立时间范围，最大1年）
+    # ── 体重记录（独立时间范围，最大1年） ──────────────────
     weights = db.execute("""
         SELECT id, weight, recorded_date, note FROM weight_logs
         WHERE recorded_date >= ?
         ORDER BY recorded_date
     """, (weight_start.isoformat(),)).fetchall()
 
-    # 获取当前奶量目标
+    # ── 获取当前奶量目标 ──────────────────────────────────
     baby = db.execute("SELECT * FROM babies LIMIT 1").fetchone()
     settings_rows = db.execute("SELECT key, value FROM settings").fetchall()
     settings_dict = {r['key']: r['value'] for r in settings_rows}
     estimate = estimate_milk(dict(baby) if baby else None, settings_dict)
     target_ml = estimate['daily_target_ml']
 
-    # 填充空白天
-    feed_map = {r['d']: dict(r) for r in feed_daily}
-    excrete_map = {r['d']: dict(r) for r in excrete_daily}
-
-    daily_data = []
-    for i in range(days):
-        d = (start_date + timedelta(days=i)).isoformat()
-        daily_data.append({
-            'date': d,
-            'feed_ml': feed_map.get(d, {}).get('total_ml', 0),
-            'feed_count': feed_map.get(d, {}).get('feed_count', 0),
-            'urine_count': excrete_map.get(d, {}).get('urine_count', 0),
-            'stool_count': excrete_map.get(d, {}).get('stool_count', 0),
-        })
-
     return jsonify({
         'daily': daily_data,
-        'feed_hours': [dict(r) for r in feed_hours],
-        'feed_hours_by_day': [dict(r) for r in feed_hours_by_day],
+        'feed_hours': feed_hours_list,
+        'feed_hours_by_day': feed_hours_by_day_list,
         'weights': [dict(r) for r in weights],
         'target_ml': target_ml,
         'days': days,
         'weight_days': weight_days,
     })
-
 
 # ── Vaccine Schedule (2024 国家免疫规划) ──────────────────
 
