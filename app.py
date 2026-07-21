@@ -943,8 +943,60 @@ def _today_summary_data(db, target_date=None):
         "SELECT * FROM records WHERE timestamp >= ? AND timestamp <= ? AND type IN ('feed', 'excrete')",
         (start, end)
     ).fetchall()
-    feeds = [r for r in today_records if r['type'] == 'feed']
+    all_feeds = [r for r in today_records if r['type'] == 'feed']
     excretes = [r for r in today_records if r['type'] == 'excrete']
+
+    # ── 母乳左右合并逻辑 ──────────────────────────────────
+    # 规则：母乳(左)和母乳(右)在 30 分钟内视为同一次喂养
+    BREAST_MERGE_WINDOW = 30  # 分钟
+
+    def is_breast_record(r):
+        return r['sub_type'] in ('breast_left', 'breast_right')
+
+    # 分离母乳记录和非母乳记录
+    breast_feeds = [r for r in all_feeds if is_breast_record(r)]
+    other_feeds = [r for r in all_feeds if not is_breast_record(r)]
+
+    # 按时间排序母乳记录
+    breast_feeds.sort(key=lambda r: r['timestamp'])
+
+    # 合并母乳记录
+    merged_breast_feeds = []
+    i = 0
+    while i < len(breast_feeds):
+        current = breast_feeds[i]
+        # 复制当前记录，合并奶量
+        merged = dict(current)
+        merged_amount = current['amount'] or 0
+        
+        # 检查后续记录是否在合并窗口内
+        j = i + 1
+        current_time = datetime.strptime(current['timestamp'], '%Y-%m-%d %H:%M:%S')
+        
+        while j < len(breast_feeds):
+            next_time = datetime.strptime(breast_feeds[j]['timestamp'], '%Y-%m-%d %H:%M:%S')
+            time_diff = (next_time - current_time).total_seconds() / 60  # 分钟
+            
+            if time_diff <= BREAST_MERGE_WINDOW:
+                # 合并奶量
+                merged_amount += (breast_feeds[j]['amount'] or 0)
+                # 更新时间为最后一条记录的时间
+                merged['timestamp'] = breast_feeds[j]['timestamp']
+                j += 1
+            else:
+                break
+        
+        # 保存合并后的记录
+        merged['amount'] = merged_amount
+        merged_breast_feeds.append(merged)
+        i = j
+
+    # 合并所有喂养记录：非母乳记录 + 合并后的母乳记录
+    feeds = other_feeds + merged_breast_feeds
+    
+    # 按时间排序
+    feeds.sort(key=lambda r: r['timestamp'])
+    # ── 合并逻辑结束 ──────────────────────────────────────
 
     total_feed_ml = sum(f['amount'] or 0 for f in feeds)
     feed_count = len(feeds)
