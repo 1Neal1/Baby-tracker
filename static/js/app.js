@@ -71,7 +71,8 @@ const TYPE_LABELS = {
     feed: '喂养',
     excrete: '排泄',
     symptom: '症状',
-    supplement: '补充'
+    supplement: '补充',
+    sleep: '睡眠'
 };
 
 const SUB_TYPE_LABELS = {
@@ -91,7 +92,9 @@ const SUB_TYPE_LABELS = {
     iron: '铁剂',
     calcium: '钙剂',
     dha: 'DHA',
-    probiotics: '益生菌'
+    probiotics: '益生菌',
+    deep: '熟睡',
+    light: '眯眯眼'
 };
 
 function typeLabel(type, subType) {
@@ -177,6 +180,11 @@ const EDIT_SUB_TYPES = {
         { value: 'dha', label: 'DHA' },
         { value: 'probiotics', label: '益生菌' },
         { value: '_custom', label: '自定义...' },
+    ],
+    sleep: [
+        { value: 'deep', label: '熟睡' },
+        { value: 'light', label: '眯眯眼' },
+        { value: '_custom', label: '自定义...' },
     ]
 };
 
@@ -211,6 +219,7 @@ function _showEditModal(r) {
                 <label class="text-text-muted text-xs mb-1 block">类型</label>
                 <select id="edit-type" class="input-field" onchange="_onEditTypeChange()">
                     <option value="feed" ${r.type==='feed'?'selected':''}>喂养</option>
+                    <option value="sleep" ${r.type==='sleep'?'selected':''}>睡眠</option>
                     <option value="excrete" ${r.type==='excrete'?'selected':''}>排泄</option>
                     <option value="symptom" ${r.type==='symptom'?'selected':''}>症状</option>
                     <option value="supplement" ${r.type==='supplement'?'selected':''}>补充</option>
