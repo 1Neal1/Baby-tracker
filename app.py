@@ -1453,6 +1453,16 @@ def get_weight_logs():
     return jsonify([dict(r) for r in rows])
 
 
+def _update_baby_current_weight(db):
+    """更新婴儿当前体重为最新的体重记录"""
+    latest = db.execute("""
+        SELECT weight FROM weight_logs 
+        ORDER BY recorded_date DESC, id DESC LIMIT 1
+    """).fetchone()
+    if latest:
+        db.execute("UPDATE babies SET weight = ? WHERE id = 1", (latest['weight'],))
+
+
 @app.route('/api/weight-logs', methods=['POST'])
 @login_required
 def add_weight_log():
@@ -1466,8 +1476,8 @@ def add_weight_log():
         "INSERT INTO weight_logs (baby_id, weight, recorded_date, note) VALUES (1, ?, ?, ?)",
         (data['weight'], data['recorded_date'], data.get('note', ''))
     )
-    # 同步更新婴儿当前体重
-    db.execute("UPDATE babies SET weight = ? WHERE id = 1", (data['weight'],))
+    # 更新婴儿当前体重为最新的体重记录
+    _update_baby_current_weight(db)
     db.commit()
     add_log('记录体重', 'weight_log', cursor.lastrowid, f"{data['weight']}kg @ {data['recorded_date']}")
     return jsonify({'id': cursor.lastrowid, 'message': '已记录'}), 201
@@ -1480,6 +1490,8 @@ def delete_weight_log(log_id):
         return jsonify({'error': '仅管理员可删除'}), 403
     db = get_db()
     db.execute("DELETE FROM weight_logs WHERE id = ?", (log_id,))
+    # 更新婴儿当前体重为最新的体重记录
+    _update_baby_current_weight(db)
     db.commit()
     add_log('删除体重', 'weight_log', log_id, '')
     return jsonify({'message': '已删除'})
@@ -1501,6 +1513,8 @@ def update_weight_log(log_id):
     db = get_db()
     db.execute("UPDATE weight_logs SET weight=?, recorded_date=?, note=? WHERE id=?",
                (weight, recorded_date, note, log_id))
+    # 更新婴儿当前体重为最新的体重记录
+    _update_baby_current_weight(db)
     db.commit()
     add_log('编辑体重', 'weight_log', log_id, f"{weight}kg @ {recorded_date}")
     return jsonify({'message': '已更新'})
