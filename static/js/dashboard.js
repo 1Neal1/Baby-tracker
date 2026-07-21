@@ -583,14 +583,33 @@ function buildRecordDetail(r) {
     if (r.amount) parts.push(`${r.amount}ml`);
     if (r.duration) {
         if (r.type === 'sleep') {
+            // 计算开始和结束时间
+            let startTimeStr = '';
+            let endTimeStr = '';
+            if (r.timestamp) {
+                try {
+                    const startDate = new Date(r.timestamp.replace(' ', 'T'));
+                    startTimeStr = formatTime(r.timestamp);
+                    const endDate = new Date(startDate.getTime() + r.duration * 60000);
+                    endTimeStr = formatTime(endDate.toISOString().replace('T', ' '));
+                } catch (e) {
+                    // ignore
+                }
+            }
             const hours = Math.floor(r.duration / 60);
             const mins = r.duration % 60;
+            let durationStr = '';
             if (hours > 0 && mins > 0) {
-                parts.push(`${hours}小时${mins}分钟`);
+                durationStr = `${hours}小时${mins}分钟`;
             } else if (hours > 0) {
-                parts.push(`${hours}小时`);
+                durationStr = `${hours}小时`;
             } else {
-                parts.push(`${mins}分钟`);
+                durationStr = `${mins}分钟`;
+            }
+            if (startTimeStr && endTimeStr) {
+                parts.push(`${startTimeStr} - ${endTimeStr} (${durationStr})`);
+            } else {
+                parts.push(durationStr);
             }
         } else {
             parts.push(formatDurationToChinese(r.duration));
