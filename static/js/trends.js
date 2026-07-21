@@ -4,6 +4,7 @@ let weightChartInstance = null;
 let feedChartInstance = null;
 let hourChartInstance = null;
 let excreteChartInstance = null;
+let sleepChartInstance = null;
 let _trendsObserver = null;
 
 function initTrends() {
@@ -22,6 +23,7 @@ function initTrends() {
                 renderFeedChart();
                 renderHourChart();
                 renderExcreteChart();
+                renderSleepChart(trendsData.sleepData);
             }
         });
         _trendsObserver.observe(document.documentElement, {
@@ -38,11 +40,17 @@ async function loadTrends() {
     const weightDaysEl = document.getElementById('weight-days');
     const weightDays = weightDaysEl ? weightDaysEl.value : '30';
     try {
-        trendsData = await api(`/api/stats/trends?days=${days}&weight_days=${weightDays}`);
+        const [trends, sleepTrends] = await Promise.all([
+            api(`/api/stats/trends?days=${days}&weight_days=${weightDays}`),
+            api(`/api/sleep/trends?days=${days}`)
+        ]);
+        trendsData = trends;
+        trendsData.sleepData = sleepTrends;
         renderWeightChart();
         renderFeedChart();
         renderHourChart();
         renderExcreteChart();
+        renderSleepChart(sleepTrends);
     } catch (e) {
         console.error('加载趋势失败:', e);
     }
@@ -202,7 +210,6 @@ function renderWeightChart() {
         }
     });
 
-    // 体重列表
     list.innerHTML = weights.slice().reverse().slice(0, 5).map(w => `
         <div class="flex items-center justify-between py-1 text-xs group">
             <span class="text-text-muted font-mono">${esc(w.recorded_date)}</span>
@@ -222,7 +229,6 @@ function renderWeightChart() {
     lucide.createIcons();
 }
 
-// 体重列表事件委托
 document.addEventListener('click', function(e) {
     const editBtn = e.target.closest('[data-edit-weight]');
     if (editBtn) {
@@ -261,7 +267,6 @@ function renderFeedChart() {
     const barColors = isToday.map(t => t ? colors.accent : colors.accentBg);
     const barBorderColors = isToday.map(t => t ? colors.accent : colors.accent);
 
-    // 目标线插件
     const targetLinePlugin = {
         id: 'targetLine',
         afterDatasetsDraw(chart) {
@@ -277,7 +282,6 @@ function renderFeedChart() {
             c.moveTo(chartArea.left, y);
             c.lineTo(chartArea.right, y);
             c.stroke();
-            // 标签
             c.globalAlpha = 0.7;
             c.fillStyle = colors.accent;
             c.font = "9px 'JetBrains Mono', monospace";
@@ -339,6 +343,82 @@ function renderFeedChart() {
                         ...commonScaleOptions(colors, '').ticks,
                         callback: function(value) { return value + ' ml'; }
                     }
+                }
+            }
+        }
+    });
+}
+
+// ── Sleep Chart (Bar) ──────────────────────────────────
+function renderSleepChart(data) {
+    const colors = getThemeColors();
+
+    sleepChartInstance = destroyChart(sleepChartInstance);
+
+    if (!data || !data.daily || data.daily.length === 0) return;
+
+    const ctx = document.getElementById('sleep-chart').getContext('2d');
+    const daily = data.daily;
+    const labels = daily.map(d => d.date);
+    const dataValues = daily.map(d => d.total_hours);
+    const isToday = daily.map(d => d.date === getLocalDate());
+
+    const barColors = isToday.map(t => t ? colors.accent : colors.accentBg);
+    const barBorderColors = isToday.map(t => t ? colors.accent : colors.accent);
+
+    sleepChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '睡眠时长 (h)',
+                data: dataValues,
+                backgroundColor: barColors,
+                borderColor: barBorderColors,
+                borderWidth: 1,
+                borderRadius: 4,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    ...commonTooltipConfig(colors),
+                    callbacks: {
+                        title: function(items) { return items[0].label; },
+                        label: function(item) {
+                            const d = daily[item.dataIndex];
+                            return [` ${d.total_hours} 小时`, ` ${d.sleep_count} 次`];
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: {
+                        color: colors.text,
+                        font: { family: "'JetBrains Mono', monospace", size: 9 },
+                        maxRotation: 0,
+                        callback: function(value) {
+                            return this.getLabelForValue(value).slice(8);
+                        }
+                    },
+                    border: { display: false },
+                },
+                y: {
+                    grid: { color: colors.grid, drawBorder: false },
+                    ticks: {
+                        color: colors.text,
+                        font: { family: "'JetBrains Mono', monospace", size: 10 },
+                        callback: function(value) { return value + 'h'; }
+                    },
+                    border: { display: false },
+                    beginAtZero: true
                 }
             }
         }
