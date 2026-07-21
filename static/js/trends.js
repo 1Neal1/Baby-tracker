@@ -360,8 +360,8 @@ function renderSleepChart(data) {
     const ctx = document.getElementById('sleep-chart').getContext('2d');
     const daily = data.daily;
     const labels = daily.map(d => d.date);
-    // 将分钟转换为小时（保留1位小数）
-    const dataValues = daily.map(d => parseFloat((d.total_minutes / 60).toFixed(1)));
+    // 使用 total_hours（已经是小时单位）
+    const dataValues = daily.map(d => d.total_hours);
     const isToday = daily.map(d => d.date === getLocalDate());
 
     const barColors = isToday.map(t => t ? colors.accent : colors.accentBg);
@@ -393,9 +393,7 @@ function renderSleepChart(data) {
                         title: function(items) { return items[0].label; },
                         label: function(item) {
                             const d = daily[item.dataIndex];
-                            // 显示小时和次数
-                            const hours = (d.total_minutes / 60).toFixed(1);
-                            return [` ${hours} 小时`, ` ${d.sleep_count} 次`];
+                            return [` ${d.total_hours} 小时`, ` ${d.sleep_count} 次`];
                         }
                     }
                 }
