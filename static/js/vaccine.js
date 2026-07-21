@@ -1024,7 +1024,19 @@ function renderRecords(records, vaccineData, healthData, countdownList, dateStr)
 
             let detail = '';
             if (r.amount) detail += `${r.amount}ml`;
-            if (r.duration) detail += ` · ${r.duration}分钟`;
+            if (r.duration) {
+                const mins = Math.floor(r.duration / 60);
+                const secs = r.duration % 60;
+                let durationStr = '';
+                if (mins > 0 && secs > 0) {
+                    durationStr = `${mins}分钟${secs}秒`;
+                } else if (mins > 0) {
+                    durationStr = `${mins}分钟`;
+                } else {
+                    durationStr = `${secs}秒`;
+                }
+                detail += ` · ${durationStr}`;
+            }
             if (r.temperature) detail += ` · ${r.temperature}°C`;
             if (r.color) detail += ` · ${r.color}`;
             if (r.consistency) detail += ` · ${r.consistency}`;
