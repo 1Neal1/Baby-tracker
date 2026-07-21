@@ -1561,12 +1561,13 @@ def get_sleep_trends():
     daily_data = []
     for i in range(days):
         d = (date.today() - timedelta(days=days-1-i)).isoformat()
-        data = sleep_map.get(d, {'total_minutes': 0, 'sleep_count': 0})
+        data = sleep_map.get(d, {'total_seconds': 0, 'sleep_count': 0})
+        total_hours = round(data.get('total_seconds', 0) / 3600, 1)
         daily_data.append({
             'date': d,
-            'total_minutes': data.get('total_minutes', 0),
+            'total_seconds': data.get('total_seconds', 0),
             'sleep_count': data.get('sleep_count', 0),
-            'total_hours': round(data.get('total_minutes', 0) / 60, 1)
+            'total_hours': total_hours
         })
     
     return jsonify({
