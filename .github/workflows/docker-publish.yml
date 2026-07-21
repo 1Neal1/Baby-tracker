@@ -1,8 +1,8 @@
 name: Docker Publish to Docker Hub & GHCR
 
-# on:
+on:
   push:
-    # branches: ["main", "master"]
+    branches: ["main", "master"]
   release:
     types: [published]
 
