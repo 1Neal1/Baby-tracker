@@ -1003,14 +1003,10 @@ function renderRecords(records, vaccineData, healthData, countdownList, dateStr)
             const iconMap = { feed: 'droplets', excrete: 'circle-dot', symptom: 'heart-pulse', supplement: 'pill', sleep: 'moon' };
             const colorMap = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400', sleep: 'text-indigo-400' };
 
-// 在 renderRecords 函数中，找到处理 records.forEach 的部分
-// 修改 detail 的构建逻辑
-
             let detail = '';
             if (r.amount) detail += `${r.amount}ml`;
             if (r.duration) {
                 if (r.type === 'sleep') {
-                    // 计算开始和结束时间
                     let startTimeStr = '';
                     let endTimeStr = '';
                     if (r.timestamp) {
@@ -1056,7 +1052,6 @@ function renderRecords(records, vaccineData, healthData, countdownList, dateStr)
             if (r.color) detail += ` · ${r.color}`;
             if (r.consistency) detail += ` · ${r.consistency}`;
             if (r.note) detail += ` · ${r.note}`;
-
             items.push(`
             <div class="card flex items-center gap-3 py-3 px-4 fade-in">
                 <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${bgMap[r.type] || bgMap.symptom}">
