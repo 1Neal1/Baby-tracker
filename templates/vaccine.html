@@ -50,6 +50,7 @@
                 <!-- 图例 -->
                 <div class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 mt-3 text-[10px] text-text-muted">
                     <span class="flex items-center gap-1"><span class="cal-dot-feed cal-legend-dot"></span>喂养</span>
+                    <span class="flex items-center gap-1"><span class="cal-dot-sleep cal-legend-dot"></span>睡眠</span>
                     <span class="flex items-center gap-1"><span class="cal-dot-vaccine cal-legend-dot"></span>疫苗</span>
                     <span class="flex items-center gap-1"><span class="cal-dot-health cal-legend-dot"></span>随访</span>
                     <span class="flex items-center gap-1"><span class="cal-dot-countdown cal-legend-dot"></span>倒数日</span>
@@ -63,11 +64,11 @@
         <div class="card p-1 grid grid-cols-4 gap-0.5">
             <button class="filter-pill active" data-filter="all" onclick="filterRecords('all', this)">全部</button>
             <button class="filter-pill" data-filter="feed" onclick="filterRecords('feed', this)">喂养</button>
+            <button class="filter-pill" data-filter="sleep" onclick="filterRecords('sleep', this)">睡眠</button>
             <button class="filter-pill" data-filter="excrete" onclick="filterRecords('excrete', this)">排泄</button>
             <button class="filter-pill" data-filter="symptom" onclick="filterRecords('symptom', this)">症状</button>
             <button class="filter-pill" data-filter="supplement" onclick="filterRecords('supplement', this)">补充</button>
             <button class="filter-pill" data-filter="vaccine" onclick="filterRecords('vaccine', this)">疫苗</button>
-            <button class="filter-pill" data-filter="health" onclick="filterRecords('health', this)">随访</button>
             <button class="filter-pill" data-filter="countdown" onclick="filterRecords('countdown', this)">倒数日</button>
         </div>
 
