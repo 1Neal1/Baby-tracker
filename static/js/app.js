@@ -213,12 +213,15 @@ function _showEditModal(r) {
     const datePart = ts ? ts.slice(0, 10) : '';
     const timePart = ts ? ts.slice(11, 16) : '';
     
+    // duration 存储的是秒，显示为分钟
+    const durationMinutes = r.duration ? Math.round(r.duration / 60) : '';
+    
     // 计算结束时间（如果有时长）
     let endTimePart = '';
     if (ts && r.duration) {
         try {
             const startDate = new Date(ts.replace(' ', 'T'));
-            const endDate = new Date(startDate.getTime() + r.duration * 60000);
+            const endDate = new Date(startDate.getTime() + r.duration * 1000); // duration 是秒
             endTimePart = endDate.toTimeString().slice(0, 5);
         } catch (e) {
             endTimePart = '';
@@ -253,7 +256,7 @@ function _showEditModal(r) {
             </div>
             <div>
                 <label class="text-text-muted text-xs mb-1 block">时长 (分钟)</label>
-                <input type="number" id="edit-duration" class="input-field font-mono" value="${esc(r.duration || '')}" min="0" onchange="_updateEndTimeFromDuration()" oninput="_updateEndTimeFromDuration()">
+                <input type="number" id="edit-duration" class="input-field font-mono" value="${esc(durationMinutes)}" min="0" onchange="_updateEndTimeFromDuration()" oninput="_updateEndTimeFromDuration()">
             </div>
             <div>
                 <label class="text-text-muted text-xs mb-1 block">日期</label>
@@ -300,7 +303,7 @@ function _showEditModal(r) {
     _onEditTypeChange();
 }
 
-// 根据开始时间和时长计算结束时间
+// 根据开始时间和时长（分钟）计算结束时间
 function _updateEndTimeFromDuration() {
     const startTimeInput = document.getElementById('edit-start-time');
     const dateInput = document.getElementById('edit-date');
@@ -310,11 +313,11 @@ function _updateEndTimeFromDuration() {
     
     const dateVal = dateInput.value;
     const startVal = startTimeInput.value;
-    const durationVal = parseInt(durationInput.value);
-    if (dateVal && startVal && durationVal > 0) {
+    const durationMinutes = parseInt(durationInput.value);
+    if (dateVal && startVal && durationMinutes > 0) {
         try {
             const startDateTime = new Date(`${dateVal}T${startVal}`);
-            const endDateTime = new Date(startDateTime.getTime() + durationVal * 60000);
+            const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60000);
             endTimeInput.value = endDateTime.toTimeString().slice(0, 5);
         } catch (e) {
             endTimeInput.value = '';
@@ -334,11 +337,11 @@ function _updateEndTimeFromStart() {
     
     const dateVal = dateInput.value;
     const startVal = startTimeInput.value;
-    const durationVal = parseInt(durationInput.value);
-    if (dateVal && startVal && durationVal > 0) {
+    const durationMinutes = parseInt(durationInput.value);
+    if (dateVal && startVal && durationMinutes > 0) {
         try {
             const startDateTime = new Date(`${dateVal}T${startVal}`);
-            const endDateTime = new Date(startDateTime.getTime() + durationVal * 60000);
+            const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60000);
             endTimeInput.value = endDateTime.toTimeString().slice(0, 5);
         } catch (e) {
             endTimeInput.value = '';
@@ -348,7 +351,7 @@ function _updateEndTimeFromStart() {
     }
 }
 
-// 新增：根据结束时间计算时长
+// 根据结束时间计算时长（分钟）
 function _updateDurationFromEndTime() {
     const startTimeInput = document.getElementById('edit-start-time');
     const dateInput = document.getElementById('edit-date');
@@ -370,7 +373,6 @@ function _updateDurationFromEndTime() {
                     durationInput.value = diffMinutes;
                 }
             } else {
-                // 如果结束时间小于开始时间，可能是跨天，清空时长
                 durationInput.value = '';
             }
         } catch (e) {
@@ -437,9 +439,9 @@ async function _saveEditRecord(id) {
         timestamp = dateVal + ' ' + startTimeVal + ':00';
     }
     
-    // 获取时长
-    const durationVal = document.getElementById('edit-duration').value;
-    const duration = durationVal ? parseInt(durationVal) : null;
+    // 获取时长（分钟），保存时转换为秒
+    const durationMinutes = document.getElementById('edit-duration').value;
+    const durationSeconds = durationMinutes ? parseInt(durationMinutes) * 60 : null;
     
     // 获取备注：如果是睡眠记录，强制留空
     const type = document.getElementById('edit-type').value;
@@ -452,7 +454,7 @@ async function _saveEditRecord(id) {
         type: type,
         sub_type: subType,
         amount: document.getElementById('edit-amount').value ? parseFloat(document.getElementById('edit-amount').value) : null,
-        duration: duration,
+        duration: durationSeconds,  // 保存为秒
         color: document.getElementById('edit-color').value,
         consistency: document.getElementById('edit-consistency').value,
         temperature: document.getElementById('edit-temperature').value ? parseFloat(document.getElementById('edit-temperature').value) : null,
