@@ -142,6 +142,14 @@ body { -webkit-font-smoothing: antialiased; }
     background: rgba(59,130,246,0.1); color: #2563eb;
     border-color: rgba(59,130,246,0.25);
 }
+.badge-sleep {
+    background: rgba(99,102,241,0.15); color: #818cf8;
+    border-color: rgba(99,102,241,0.3);
+}
+[data-theme="light"] .badge-sleep {
+    background: rgba(99,102,241,0.1); color: #4f46e5;
+    border-color: rgba(99,102,241,0.25);
+}
 .badge-excrete {
     background: rgba(245,158,11,0.15); color: #fbbf24;
     border-color: rgba(245,158,11,0.3);
@@ -355,6 +363,7 @@ body { -webkit-font-smoothing: antialiased; }
     width: 4px; height: 4px; border-radius: 50%; display: block;
 }
 .cal-dot-feed { background: var(--c-accent); }
+.cal-dot-sleep { background: #6366f1; }
 .cal-dot-vaccine { background: #eab308; }
 .cal-dot-upcoming { background: #ef4444; }
 .cal-dot-overdue { background: #333; }
@@ -480,7 +489,7 @@ input[type="time"].input-field::-webkit-date-and-time-value {
 [data-theme="light"] .hover\:bg-red-500\/10:hover { background: rgba(220,38,38,0.08); }
 [data-theme="light"] .hover\:bg-accent\/10:hover { background: rgba(5,150,105,0.08); }
 [data-theme="light"] .hover\:bg-white\/5:hover { background: rgba(0,0,0,0.04); }
-[data-theme="light"] .hover\:bg-white/\[0\.02\]:hover { background: rgba(0,0,0,0.03); }
+[data-theme="light"] .hover\:bg-white\/\[0\.02\]:hover { background: rgba(0,0,0,0.03); }
 
 :root { --calendar-icon-filter: invert(1); }
 [data-theme="light"] { --calendar-icon-filter: none; }
