@@ -65,6 +65,42 @@ async function serverGetAllTimerStates() {
     return await api('/api/timer/all');
 }
 
+// ── 日期时间辅助函数 ──────────────────────────────────────
+
+function formatDateForAPI(date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`;
+}
+
+function formatDateTimeForAPI(date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function setEndOfDay(date) {
+    const d = new Date(date);
+    d.setHours(23, 59, 59, 999);
+    return d;
+}
+
+function setStartOfDay(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+}
+
+function formatDurationToChinese(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins > 0 && secs > 0) {
+        return `${mins}分钟${secs}秒`;
+    } else if (mins > 0) {
+        return `${mins}分钟`;
+    } else {
+        return `${secs}秒`;
+    }
+}
+
 // ── 初始化 ──────────────────────────────────────────────────
 
 async function initDashboard() {
@@ -148,7 +184,6 @@ function renderQuickButtons(buttons) {
         if (isBreastBtn && cachedState && cachedState.isRunning) {
             btnLabel = '⏱ 停止';
         }
-        // 存储完整的按钮数据到 dataset，避免依赖外部数据
         html += `
         <button class="quick-btn flex flex-col items-center gap-1 p-3 rounded-xl border ${typeBorders[btn.type] || typeBorders.symptom} bg-surface hover:bg-white/5 active:scale-95 transition-all duration-150 cursor-pointer"
                 data-btn-id="${btn.id}" 
@@ -163,62 +198,46 @@ function renderQuickButtons(buttons) {
     }
     container.innerHTML = html;
 
-    // 移除旧的事件监听，重新绑定（使用新的事件委托）
-    // 先移除旧的监听器（通过替换 DOM 元素来清除）
-    const newContainer = container.cloneNode(true);
-    container.parentNode.replaceChild(newContainer, container);
-    
-    // 重新获取新的容器并绑定事件
-    const newContainerRef = document.getElementById('quick-buttons');
-    if (newContainerRef) {
-        newContainerRef.addEventListener('click', function(e) {
-            const btn = e.target.closest('.quick-btn');
-            if (!btn) return;
-            
-            // 直接从 dataset 读取所有数据
-            const btnId = parseInt(btn.dataset.btnId);
-            const label = btn.dataset.btnLabel;
-            const isBreast = btn.dataset.isBreast === 'true';
-            const btnType = btn.dataset.btnType;
-            const btnSubType = btn.dataset.btnSubType;
-            const btnAmount = parseFloat(btn.dataset.btnAmount) || 0;
-            
-            // 构建按钮信息对象
+    // 重新绑定事件
+    container.addEventListener('click', function(e) {
+        const btn = e.target.closest('.quick-btn');
+        if (!btn) return;
+        
+        const btnId = parseInt(btn.dataset.btnId);
+        const label = btn.dataset.btnLabel;
+        const isBreast = btn.dataset.isBreast === 'true';
+        const btnType = btn.dataset.btnType;
+        
+        if (isBreast) {
+            handleBreastButtonClick(btnId, label);
+        } else if (btnType === 'sleep') {
+            handleSleepQuickRecord(btnId, label);
+        } else {
             const btnInfo = {
                 id: btnId,
                 label: label,
                 type: btnType,
-                sub_type: btnSubType,
-                amount: btnAmount
+                sub_type: btn.dataset.btnSubType,
+                amount: parseFloat(btn.dataset.btnAmount) || 0
             };
-            
-            if (isBreast) {
-                handleBreastButtonClick(btnId, label);
-            } else if (btnType === 'sleep') {
-                handleSleepQuickRecord(btnId, label);
-            } else {
-                quickRecordWithInfo(btnInfo);
-            }
-        });
-    }
+            quickRecordWithInfo(btnInfo);
+        }
+    });
 
     lucide.createIcons();
 }
+
+// ── 快速记录（带按钮信息） ──────────────────────────────────
 
 async function quickRecordWithInfo(btnInfo) {
     try {
         const now = new Date();
         const timestamp = formatDateTimeForAPI(now);
-        // 使用传入的 btnInfo 而不是从 dashboardData 查找
         const data = await api(`/api/quick-record/${btnInfo.id}`, { 
             method: 'POST', 
             body: JSON.stringify({ 
                 timestamp, 
-                date: getLocalDate(),
-                // 传递按钮类型信息，确保后端正确记录
-                type: btnInfo.type,
-                sub_type: btnInfo.sub_type,
-                amount: btnInfo.amount
+                date: getLocalDate()
             }) 
         });
         showToast(`${btnInfo.label} - 记录成功`);
@@ -229,10 +248,49 @@ async function quickRecordWithInfo(btnInfo) {
         showToast(e.message);
     }
 }
+
+async function quickRecord(btnId, label) {
+    const btnInfo = dashboardData.quick_buttons.find(b => b.id === btnId);
+    if (btnInfo) {
+        await quickRecordWithInfo(btnInfo);
+    } else {
+        try {
+            const now = new Date();
+            const timestamp = formatDateTimeForAPI(now);
+            const data = await api(`/api/quick-record/${btnId}`, { 
+                method: 'POST', 
+                body: JSON.stringify({ timestamp, date: getLocalDate() }) 
+            });
+            showToast(`${label} - 记录成功`);
+            dashboardData = data;
+            renderDashboard(data);
+            await restoreTimerStatesFromServer();
+        } catch (e) {
+            showToast(e.message);
+        }
+    }
+}
+
 // ── 睡眠快速记录 ────────────────────────────────────────────
 
+async function submitSingleSleepRecord(subType, minutes, startTime, label) {
+    const recordData = {
+        type: 'sleep',
+        sub_type: subType,
+        amount: 0,
+        duration: minutes * 60,
+        timestamp: formatDateTimeForAPI(startTime),
+        note: '',
+        _date: getLocalDate()
+    };
+    await api('/api/records', {
+        method: 'POST',
+        body: JSON.stringify(recordData)
+    });
+    showToast(`${label} - 记录成功 (${minutes}分钟)`);
+}
+
 async function handleSleepQuickRecord(btnId, label) {
-    // 直接从按钮元素获取数据，避免依赖 dashboardData
     const btn = document.querySelector(`.quick-btn[data-btn-id="${btnId}"]`);
     if (!btn) {
         showToast('按钮信息未找到');
@@ -253,96 +311,59 @@ async function handleSleepQuickRecord(btnId, label) {
         const startTime = new Date(now.getTime());
         const endTime = new Date(now.getTime() + totalMinutes * 60000);
         
-        // 检查是否跨天（开始日期和结束日期不同）
         const startDateStr = formatDateForAPI(startTime);
         const endDateStr = formatDateForAPI(endTime);
         
         if (startDateStr !== endDateStr) {
-            // ---- 跨天：拆分为两段记录 ----
+            // 跨天：拆分为两段
+            // 第一段：从开始时间到当天 23:59
+            const firstEnd = setEndOfDay(startTime);
+            const firstDurationMinutes = Math.round((firstEnd - startTime) / 60000);
             
-            // 第一段：从开始时间到当天 23:59:59
-            const dayEnd = new Date(startTime);
-            dayEnd.setHours(23, 59, 59, 999);
-            const firstDurationMinutes = Math.round((dayEnd - startTime) / 60000);
+            // 第二段：从第二天 00:00 到结束时间
+            const secondStart = setStartOfDay(endTime);
+            const secondDurationMinutes = Math.round((endTime - secondStart) / 60000);
             
-            // 第二段：从第二天 00:00:00 到结束时间
-            const dayStart = new Date(endTime);
-            dayStart.setHours(0, 0, 0, 0);
-            const secondDurationMinutes = Math.round((endTime - dayStart) / 60000);
-            
-            // 确保两段时间都大于0
             if (firstDurationMinutes > 0 && secondDurationMinutes > 0) {
                 // 第一段记录
-                const firstRecordData = {
-                    type: 'sleep',
-                    sub_type: btnSubType,
-                    amount: 0,
-                    duration: firstDurationMinutes * 60,  // 转换为秒
-                    timestamp: formatDateTimeForAPI(startTime),
-                    note: '',
-                    _date: getLocalDate()
-                };
                 await api('/api/records', {
                     method: 'POST',
-                    body: JSON.stringify(firstRecordData)
+                    body: JSON.stringify({
+                        type: 'sleep',
+                        sub_type: btnSubType,
+                        amount: 0,
+                        duration: firstDurationMinutes * 60,
+                        timestamp: formatDateTimeForAPI(startTime),
+                        note: '',
+                        _date: getLocalDate()
+                    })
                 });
-                
                 // 第二段记录
-                const secondRecordData = {
-                    type: 'sleep',
-                    sub_type: btnSubType,
-                    amount: 0,
-                    duration: secondDurationMinutes * 60,  // 转换为秒
-                    timestamp: formatDateTimeForAPI(dayStart),
-                    note: '',
-                    _date: getLocalDate()
-                };
                 await api('/api/records', {
                     method: 'POST',
-                    body: JSON.stringify(secondRecordData)
+                    body: JSON.stringify({
+                        type: 'sleep',
+                        sub_type: btnSubType,
+                        amount: 0,
+                        duration: secondDurationMinutes * 60,
+                        timestamp: formatDateTimeForAPI(secondStart),
+                        note: '',
+                        _date: getLocalDate()
+                    })
                 });
-                
                 showToast(`${label} - 记录成功 (跨天，已拆分为2段)`);
             } else {
-                // 如果某一段为0，不拆分，按单条记录处理
                 await submitSingleSleepRecord(btnSubType, totalMinutes, startTime, label);
             }
         } else {
-            // ---- 不跨天：单条记录 ----
             await submitSingleSleepRecord(btnSubType, totalMinutes, startTime, label);
         }
         
-        // 刷新页面数据
         await refreshDashboard();
         await restoreTimerStatesFromServer();
-        
     } catch (e) {
         showToast(e.message || '记录失败');
     }
-}
-
-// 新增：提交单条睡眠记录
-async function submitSingleSleepRecord(subType, minutes, startTime, label) {
-    const recordData = {
-        type: 'sleep',
-        sub_type: subType,
-        amount: 0,
-        duration: minutes * 60,  // 转换为秒
-        timestamp: formatDateTimeForAPI(startTime),
-        note: '',
-        _date: getLocalDate()
-    };
-    await api('/api/records', {
-        method: 'POST',
-        body: JSON.stringify(recordData)
-    });
-    showToast(`${label} - 记录成功 (${minutes}分钟)`);
-}
-
-// 新增：格式化日期为 YYYY-MM-DD
-function formatDateForAPI(date) {
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`;
 }
 
 // ── 母乳按钮计时器逻辑 ──────────────────────────────────────
@@ -453,7 +474,7 @@ async function submitBreastRecord(btnId, label, btnType, btnSubType, btnAmount, 
         amount: btnAmount,
         duration: durationSeconds,
         timestamp: timestamp,
-        note: '',  // 备注留空
+        note: '',
         _date: getLocalDate()
     };
     return await api('/api/records', {
@@ -463,25 +484,20 @@ async function submitBreastRecord(btnId, label, btnType, btnSubType, btnAmount, 
 }
 
 function findButtonInfo(btnId) {
-    if (!dashboardData || !dashboardData.quick_buttons) return null;
-    return dashboardData.quick_buttons.find(b => b.id === btnId) || null;
-}
-
-function formatDateTimeForAPI(date) {
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-function formatDurationToChinese(seconds) {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    if (mins > 0 && secs > 0) {
-        return `${mins}分钟${secs}秒`;
-    } else if (mins > 0) {
-        return `${mins}分钟`;
-    } else {
-        return `${secs}秒`;
+    const btn = document.querySelector(`.quick-btn[data-btn-id="${btnId}"]`);
+    if (btn) {
+        return {
+            id: parseInt(btn.dataset.btnId),
+            label: btn.dataset.btnLabel,
+            type: btn.dataset.btnType,
+            sub_type: btn.dataset.btnSubType,
+            amount: parseFloat(btn.dataset.btnAmount) || 0
+        };
     }
+    if (dashboardData && dashboardData.quick_buttons) {
+        return dashboardData.quick_buttons.find(b => b.id === btnId) || null;
+    }
+    return null;
 }
 
 function updateBreastButtonLabel(btnId, label) {
@@ -645,29 +661,6 @@ async function restoreTimerStatesFromServer() {
     }
 }
 
-async function quickRecord(btnId, label) {
-    // 从 dashboardData 查找按钮信息
-    const btnInfo = dashboardData.quick_buttons.find(b => b.id === btnId);
-    if (btnInfo) {
-        await quickRecordWithInfo(btnInfo);
-    } else {
-        try {
-            const now = new Date();
-            const timestamp = formatDateTimeForAPI(now);
-            const data = await api(`/api/quick-record/${btnId}`, { 
-                method: 'POST', 
-                body: JSON.stringify({ timestamp, date: getLocalDate() }) 
-            });
-            showToast(`${label} - 记录成功`);
-            dashboardData = data;
-            renderDashboard(data);
-            await restoreTimerStatesFromServer();
-        } catch (e) {
-            showToast(e.message);
-        }
-    }
-}
-
 function renderRecentRecords(records) {
     const container = document.getElementById('recent-records');
     if (!records || records.length === 0) {
@@ -716,20 +709,19 @@ function buildRecordDetail(r) {
     if (r.amount) parts.push(`${r.amount}ml`);
     if (r.duration) {
         if (r.type === 'sleep') {
-            // duration 是秒，计算开始和结束时间
+            // 计算开始和结束时间
             let startTimeStr = '';
             let endTimeStr = '';
             if (r.timestamp) {
                 try {
                     const startDate = new Date(r.timestamp.replace(' ', 'T'));
                     startTimeStr = formatTime(r.timestamp);
-                    const endDate = new Date(startDate.getTime() + r.duration * 1000); // duration 是秒
+                    const endDate = new Date(startDate.getTime() + r.duration * 1000);
                     endTimeStr = formatTime(endDate.toISOString().replace('T', ' '));
                 } catch (e) {
                     // ignore
                 }
             }
-            // 显示时长：秒转换为分钟
             const totalMinutes = Math.floor(r.duration / 60);
             const hours = Math.floor(totalMinutes / 60);
             const mins = totalMinutes % 60;
@@ -747,7 +739,6 @@ function buildRecordDetail(r) {
                 parts.push(durationStr);
             }
         } else {
-            // 其他类型使用 formatDurationToChinese（秒转中文）
             parts.push(formatDurationToChinese(r.duration));
         }
     }
