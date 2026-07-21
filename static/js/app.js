@@ -210,6 +210,20 @@ function _showEditModal(r) {
     }
 
     const ts = r.timestamp || '';
+    const datePart = ts ? ts.slice(0, 10) : '';
+    const timePart = ts ? ts.slice(11, 16) : '';
+    
+    // 计算结束时间（如果有时长）
+    let endTimePart = '';
+    if (ts && r.duration) {
+        try {
+            const startDate = new Date(ts.replace(' ', 'T'));
+            const endDate = new Date(startDate.getTime() + r.duration * 60000);
+            endTimePart = endDate.toTimeString().slice(0, 5);
+        } catch (e) {
+            endTimePart = '';
+        }
+    }
 
     modal.innerHTML = `
     <div class="edit-modal-content bg-surface border border-border rounded-xl p-6 w-[420px] max-w-[90vw]">
@@ -238,8 +252,20 @@ function _showEditModal(r) {
                 <input type="number" id="edit-amount" class="input-field font-mono" value="${esc(r.amount || '')}" min="0">
             </div>
             <div>
-                <label class="text-text-muted text-xs mb-1 block">时长</label>
-                <input type="number" id="edit-duration" class="input-field font-mono" value="${esc(r.duration || '')}" min="0">
+                <label class="text-text-muted text-xs mb-1 block">时长 (分钟)</label>
+                <input type="number" id="edit-duration" class="input-field font-mono" value="${esc(r.duration || '')}" min="0" onchange="_updateEndTimeFromDuration()" oninput="_updateEndTimeFromDuration()">
+            </div>
+            <div>
+                <label class="text-text-muted text-xs mb-1 block">日期</label>
+                <input type="date" id="edit-date" class="input-field font-mono" value="${esc(datePart)}">
+            </div>
+            <div>
+                <label class="text-text-muted text-xs mb-1 block">开始时间</label>
+                <input type="time" id="edit-start-time" class="input-field font-mono" value="${esc(timePart)}" onchange="_updateEndTimeFromStart()" oninput="_updateEndTimeFromStart()">
+            </div>
+            <div>
+                <label class="text-text-muted text-xs mb-1 block">结束时间</label>
+                <input type="time" id="edit-end-time" class="input-field font-mono" value="${esc(endTimePart)}" readonly style="background:var(--c-border);opacity:0.7;">
             </div>
             <div>
                 <label class="text-text-muted text-xs mb-1 block">颜色</label>
@@ -252,14 +278,6 @@ function _showEditModal(r) {
             <div>
                 <label class="text-text-muted text-xs mb-1 block">体温 (°C)</label>
                 <input type="number" id="edit-temperature" class="input-field font-mono" value="${esc(r.temperature || '')}" step="0.1">
-            </div>
-            <div>
-                <label class="text-text-muted text-xs mb-1 block">日期</label>
-                <input type="date" id="edit-date" class="input-field font-mono" value="${esc(ts.slice(0,10))}">
-            </div>
-            <div>
-                <label class="text-text-muted text-xs mb-1 block">时间</label>
-                <input type="time" id="edit-time" class="input-field font-mono" value="${esc(ts.slice(11,16))}">
             </div>
             <div>
                 <label class="text-text-muted text-xs mb-1 block">备注</label>
@@ -275,11 +293,59 @@ function _showEditModal(r) {
     modal.classList.remove('hidden');
     modal.classList.add('flex');
 
-    // 关闭FAB悬浮导航，避免冲突
     if (typeof fabClose === 'function') fabClose();
 
     window._editCurrentSubType = r.sub_type;
+    window._editOriginalTimestamp = ts;
     _onEditTypeChange();
+}
+
+// 新增：根据开始时间和时长计算结束时间
+function _updateEndTimeFromDuration() {
+    const startTimeInput = document.getElementById('edit-start-time');
+    const dateInput = document.getElementById('edit-date');
+    const durationInput = document.getElementById('edit-duration');
+    const endTimeInput = document.getElementById('edit-end-time');
+    if (!startTimeInput || !dateInput || !durationInput || !endTimeInput) return;
+    
+    const dateVal = dateInput.value;
+    const startVal = startTimeInput.value;
+    const durationVal = parseInt(durationInput.value);
+    if (dateVal && startVal && durationVal > 0) {
+        try {
+            const startDateTime = new Date(`${dateVal}T${startVal}`);
+            const endDateTime = new Date(startDateTime.getTime() + durationVal * 60000);
+            endTimeInput.value = endDateTime.toTimeString().slice(0, 5);
+        } catch (e) {
+            endTimeInput.value = '';
+        }
+    } else {
+        endTimeInput.value = '';
+    }
+}
+
+// 新增：根据开始时间变化更新结束时间
+function _updateEndTimeFromStart() {
+    const startTimeInput = document.getElementById('edit-start-time');
+    const dateInput = document.getElementById('edit-date');
+    const durationInput = document.getElementById('edit-duration');
+    const endTimeInput = document.getElementById('edit-end-time');
+    if (!startTimeInput || !dateInput || !durationInput || !endTimeInput) return;
+    
+    const dateVal = dateInput.value;
+    const startVal = startTimeInput.value;
+    const durationVal = parseInt(durationInput.value);
+    if (dateVal && startVal && durationVal > 0) {
+        try {
+            const startDateTime = new Date(`${dateVal}T${startVal}`);
+            const endDateTime = new Date(startDateTime.getTime() + durationVal * 60000);
+            endTimeInput.value = endDateTime.toTimeString().slice(0, 5);
+        } catch (e) {
+            endTimeInput.value = '';
+        }
+    } else {
+        endTimeInput.value = '';
+    }
 }
 
 function _onEditTypeChange() {
@@ -331,18 +397,29 @@ async function _saveEditRecord(id) {
             return;
         }
     }
+    
+    // 获取日期和开始时间
+    const dateVal = document.getElementById('edit-date').value;
+    const startTimeVal = document.getElementById('edit-start-time').value;
+    let timestamp = null;
+    if (dateVal && startTimeVal) {
+        timestamp = dateVal + ' ' + startTimeVal + ':00';
+    }
+    
+    // 获取时长
+    const durationVal = document.getElementById('edit-duration').value;
+    const duration = durationVal ? parseInt(durationVal) : null;
+    
     const data = {
         type: document.getElementById('edit-type').value,
         sub_type: subType,
         amount: document.getElementById('edit-amount').value ? parseFloat(document.getElementById('edit-amount').value) : null,
-        duration: document.getElementById('edit-duration').value ? parseInt(document.getElementById('edit-duration').value) : null,
+        duration: duration,
         color: document.getElementById('edit-color').value,
         consistency: document.getElementById('edit-consistency').value,
         temperature: document.getElementById('edit-temperature').value ? parseFloat(document.getElementById('edit-temperature').value) : null,
-        note: document.getElementById('edit-note').value,
-        timestamp: (document.getElementById('edit-date').value && document.getElementById('edit-time').value)
-            ? document.getElementById('edit-date').value + ' ' + document.getElementById('edit-time').value + ':00'
-            : null,
+        note: document.getElementById('edit-note').value || '',
+        timestamp: timestamp,
         _date: getLocalDate(),
     };
 
@@ -350,7 +427,6 @@ async function _saveEditRecord(id) {
         const result = await api(`/api/records/${id}`, { method: 'PUT', body: JSON.stringify(data) });
         showToast('记录已更新');
         closeEditModal();
-        // 将 API 返回的概览数据传递给回调，避免二次 GET 请求
         if (typeof _editOnSave === 'function') _editOnSave(result);
     } catch (e) {
         showToast(e.message || '更新失败');
