@@ -2,7 +2,6 @@
 let vaccineData = null;
 
 function initVaccine() {
-    // 重置 Tab 状态及事件委托标志，保证 SPA 重新进入时可重入
     _currentTab = 'schedule';
     _healthLoaded = false;
     _countdownLoaded = false;
@@ -29,7 +28,6 @@ function switchTab(tab) {
         const el = document.getElementById('tab-' + t);
         if (el) el.classList.toggle('hidden', tab !== t);
     });
-    // 头部按钮按 Tab 控制
     const addBtn = document.getElementById('vaccine-add-btn');
     const healthBtn = document.getElementById('health-add-btn');
     const countdownBtn = document.getElementById('countdown-add-btn');
@@ -38,7 +36,6 @@ function switchTab(tab) {
     if (healthBtn) healthBtn.classList.toggle('hidden', tab !== 'health');
     if (countdownBtn) countdownBtn.classList.toggle('hidden', tab !== 'countdown');
     if (datePicker) datePicker.classList.toggle('hidden', tab !== 'schedule');
-    // 按需懒加载
     if (tab === 'schedule' && !_scheduleLoaded) initCalendar();
     if (tab === 'health' && !_healthLoaded) loadHealth();
     if (tab === 'countdown' && !_countdownLoaded) loadCountdown();
@@ -78,7 +75,6 @@ function renderOverview() {
     const nextUp = ov.next_upcoming;
 
     container.innerHTML = `
-    <!-- 最近已接种 -->
     <div class="card flex items-center gap-4">
         <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
             <i data-lucide="syringe" class="w-5 h-5 text-accent"></i>
@@ -89,7 +85,6 @@ function renderOverview() {
         </div>
         <span class="text-xs text-text-muted font-mono flex-shrink-0">${lastDone ? esc(lastDone.vaccinated_date) : ''}</span>
     </div>
-    <!-- 下一次接种 -->
     <div class="card flex items-center gap-4">
         <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${nextUp && nextUp.status === 'overdue' ? 'bg-red-500/10' : 'bg-accent/10'}">
             <i data-lucide="calendar-clock" class="w-5 h-5 ${nextUp && nextUp.status === 'overdue' ? 'text-red-400' : 'text-accent'}"></i>
@@ -100,7 +95,6 @@ function renderOverview() {
         </div>
         ${nextUp ? `<span class="text-sm font-bold flex-shrink-0 ${nextUp.status === 'overdue' ? 'text-red-400' : 'text-accent'}">${nextUp.status === 'overdue' ? '逾期' + Math.abs(ov.next_days) + '天' : ov.next_days + '天后'}</span>` : ''}
     </div>
-    <!-- 进度 -->
     <div class="card">
         <div class="flex items-center justify-between mb-2">
             <span class="text-xs text-text-muted">接种进度</span>
@@ -125,7 +119,6 @@ function renderList() {
         return;
     }
 
-    // 按疫苗名分组
     const groups = {};
     schedule.forEach(s => {
         if (!groups[s.name]) groups[s.name] = [];
@@ -175,7 +168,6 @@ function renderList() {
     bindVaccineListEvents();
 }
 
-// ── 事件委托 ─────────────────────────────────────────────
 let _vaccineDelegateBound = false;
 function bindVaccineListEvents() {
     const container = document.getElementById('vaccine-list');
@@ -190,15 +182,12 @@ function bindVaccineListEvents() {
 
 function onDoseClick(name, doseIndex, status, dueDate, isCustom, vaccinatedDate, note) {
     if (status === 'done') {
-        // 已接种：弹出编辑弹窗（可修改日期/备注/删除）
         showEditVaccineModal(name, doseIndex, vaccinatedDate, note);
     } else {
-        // 未接种：弹出计划日期修改弹窗（可修改计划日期或直接记录接种）
         showPlanDateModal(name, doseIndex, dueDate);
     }
 }
 
-// ── 计划日期修改弹窗 ─────────────────────────────────────
 function showPlanDateModal(name, doseIndex, dueDate) {
     document.getElementById('pdm-name').value = name;
     document.getElementById('pdm-dose').value = doseIndex;
@@ -232,7 +221,6 @@ async function savePlanDate() {
     } catch (e) { showToast(e.message); }
 }
 
-// 从计划日期弹窗跳转到记录接种
 function planDateToRecord() {
     const name = document.getElementById('pdm-name').value;
     const doseIndex = parseInt(document.getElementById('pdm-dose').value);
@@ -241,7 +229,6 @@ function planDateToRecord() {
     showVaccineModal(name, doseIndex, dueDate);
 }
 
-// ── 接种记录弹窗 ─────────────────────────────────────────
 function showVaccineModal(name, doseIndex, dueDate) {
     document.getElementById('vm-name').value = name;
     document.getElementById('vm-dose').value = doseIndex;
@@ -273,7 +260,6 @@ async function saveVaccineRecord() {
         showToast(`${name} 第${doseIndex}剂 已记录`);
         closeVaccineModal();
         await loadVaccine();
-        // 提示下一次同项目接种时间
         const nextDose = vaccineData.schedule.find(s => s.name === name && s.status !== 'done');
         if (nextDose) {
             setTimeout(() => showToast(`${name} 下一次: 第${nextDose.dose_index}剂 (${nextDose.due_date})`), 800);
@@ -294,7 +280,6 @@ async function deleteVaccineRecord(name, doseIndex) {
     } catch (e) { showToast(e.message); }
 }
 
-// ── 编辑疫苗记录弹窗 ─────────────────────────────────────
 function showEditVaccineModal(name, doseIndex, vaccinatedDate, note) {
     document.getElementById('evm-name').value = name;
     document.getElementById('evm-dose').value = doseIndex;
@@ -345,7 +330,6 @@ async function deleteVaccineFromEdit() {
     } catch (e) { showToast(e.message); }
 }
 
-// ── 自定义疫苗弹窗 ───────────────────────────────────────
 function showAddVaccineModal() {
     document.getElementById('av-name').value = '';
     document.getElementById('av-dose').value = '1';
@@ -382,7 +366,6 @@ async function saveCustomVaccine() {
     } catch (e) { showToast(e.message); }
 }
 
-// ── 自定义健康随访弹窗 ───────────────────────────────────
 function showAddHealthModal() {
     document.getElementById('ah-name').value = '';
     document.getElementById('ah-date').value = new Date().toISOString().slice(0, 10);
@@ -417,9 +400,7 @@ async function saveCustomHealth() {
     } catch (e) { showToast(e.message); }
 }
 
-// ═════════════════════════════════════════════════════════
 // ── 健康随访 ─────────────────────────────────────────────
-// ═════════════════════════════════════════════════════════
 let healthData = null;
 
 async function loadHealth() {
@@ -437,7 +418,6 @@ async function loadHealth() {
     }
 }
 
-// 计算日期距今天数（>0 未来，0 今天，<0 已过）
 function daysDiffFromToday(dateStr) {
     if (!dateStr) return null;
     const today = new Date();
@@ -467,7 +447,6 @@ function renderHealthOverview() {
         : '';
 
     container.innerHTML = `
-    <!-- 总览 -->
     <div class="card flex items-center gap-4">
         <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
             <i data-lucide="activity" class="w-5 h-5 text-accent"></i>
@@ -478,7 +457,6 @@ function renderHealthOverview() {
         </div>
         ${ov.is_premature ? '<span class="text-[10px] text-amber-400 border border-amber-500/20 rounded px-1 flex-shrink-0">早产儿</span>' : ''}
     </div>
-    <!-- 下一次随访 -->
     <div class="card flex items-center gap-4">
         <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${overdue ? 'bg-red-500/10' : 'bg-accent/10'}">
             <i data-lucide="calendar-clock" class="w-5 h-5 ${overdue ? 'text-red-400' : 'text-accent'}"></i>
@@ -489,7 +467,6 @@ function renderHealthOverview() {
         </div>
         ${nextLabel ? `<span class="text-sm font-bold flex-shrink-0 ${overdue ? 'text-red-400' : 'text-accent'}">${nextDaysText}</span>` : ''}
     </div>
-    <!-- 进度 -->
     <div class="card">
         <div class="flex items-center justify-between mb-2">
             <span class="text-xs text-text-muted">随访进度</span>
@@ -554,7 +531,6 @@ function renderHealthList() {
     });
     container.innerHTML = html;
     lucide.createIcons();
-    // 事件委托：每次渲染重新绑定到当前容器（容器为全新元素，天然可重入）
     container.onclick = (e) => {
         const el = e.target.closest('[data-health-click]');
         if (!el) return;
@@ -570,15 +546,12 @@ function renderHealthList() {
 
 function onHealthClick(ds) {
     if (ds.status === 'done') {
-        // 已完成：编辑（修改日期/备注/删除）
         showHealthRecordModal(ds.label, 'edit', ds.completedDate, ds.note);
     } else {
-        // 未完成：弹出计划日期弹窗（可修改计划日期或记录完成）
         showHealthPlanModal(ds.label, ds.dueDate);
     }
 }
 
-// ── 健康随访-计划日期弹窗 ───────────────────────────────
 function showHealthPlanModal(label, dueDate) {
     document.getElementById('hpm-label').value = label;
     document.getElementById('hpm-date').value = dueDate || getLocalDate();
@@ -610,7 +583,6 @@ async function saveHealthPlanDate() {
     } catch (e) { showToast(e.message); }
 }
 
-// 从计划日期弹窗跳转到记录完成
 function healthPlanToRecord() {
     const label = document.getElementById('hpm-label').value;
     const dueDate = document.getElementById('hpm-date').value;
@@ -618,7 +590,6 @@ function healthPlanToRecord() {
     showHealthRecordModal(label, 'create', dueDate, '');
 }
 
-// ── 健康随访-记录完成/编辑弹窗 ─────────────────────────
 function showHealthRecordModal(label, mode, date, note) {
     document.getElementById('hrm-label').value = label;
     document.getElementById('hrm-mode').value = mode;
@@ -665,9 +636,7 @@ async function deleteHealthFromRecord() {
     } catch (e) { showToast(e.message); }
 }
 
-// ═════════════════════════════════════════════════════════
 // ── 倒数日 ───────────────────────────────────────────────
-// ═════════════════════════════════════════════════════════
 let countdownData = [];
 
 async function loadCountdown() {
@@ -716,7 +685,6 @@ function renderCountdownList() {
     });
     container.innerHTML = html;
     lucide.createIcons();
-    // 事件委托：每次渲染重新绑定到当前容器
     container.onclick = (e) => {
         const el = e.target.closest('[data-countdown-click]');
         if (!el) return;
@@ -785,11 +753,10 @@ async function deleteCountdownFromModal() {
     } catch (e) { showToast(e.message); }
 }
 
-// ═════════════════════════════════════════════════════════
 // ── 全部日程（历史日历） ─────────────────────────────────
-// ═════════════════════════════════════════════════════════
 let calYear, calMonth, selectedDate, currentFilter = 'all';
 let recordDates = new Set();
+let sleepDates = new Set();
 let vaccineVaccinatedDates = new Set();
 let vaccineOverdueDates = new Set();
 let vaccineUpcomingDates = new Set();
@@ -810,13 +777,14 @@ async function initCalendar() {
     if (dp) dp.value = selectedDate;
     updateDateDisplay(selectedDate);
     recordDates.clear();
+    sleepDates.clear();
     vaccineVaccinatedDates.clear();
     vaccineOverdueDates.clear();
     vaccineUpcomingDates.clear();
     healthCompletedDates.clear();
     healthPlannedDates.clear();
     countdownDates.clear();
-    await Promise.all([loadRecordDates(), loadVaccineDates(), loadHealthDates(), loadCountdownDates()]);
+    await Promise.all([loadRecordDates(), loadSleepDates(), loadVaccineDates(), loadHealthDates(), loadCountdownDates()]);
     _scheduleLoaded = true;
     renderCalendar();
     updateDateDiffLabel(selectedDate);
@@ -827,6 +795,13 @@ async function loadRecordDates() {
     try {
         const dates = await api('/api/records/dates');
         dates.forEach(d => recordDates.add(d));
+    } catch (e) { /* ignore */ }
+}
+
+async function loadSleepDates() {
+    try {
+        const data = await api('/api/sleep/records?days=365');
+        data.forEach(r => sleepDates.add(r.timestamp.slice(0, 10)));
     } catch (e) { /* ignore */ }
 }
 
@@ -891,6 +866,7 @@ function renderCalendar() {
         const isToday = dateStr === today;
         const isSelected = dateStr === selectedDate;
         const hasRecord = recordDates.has(dateStr);
+        const hasSleep = sleepDates.has(dateStr);
         const hasVaccine = vaccineVaccinatedDates.has(dateStr);
         const hasOverdue = vaccineOverdueDates.has(dateStr);
         const hasUpcoming = vaccineUpcomingDates.has(dateStr);
@@ -903,9 +879,10 @@ function renderCalendar() {
         if (isSelected) cls += ' selected';
 
         let dotsHtml = '';
-        if (hasRecord || hasVaccine || hasOverdue || hasUpcoming || hasHealthDone || hasHealthPlan || hasCountdown) {
+        if (hasRecord || hasSleep || hasVaccine || hasOverdue || hasUpcoming || hasHealthDone || hasHealthPlan || hasCountdown) {
             dotsHtml = '<div class="cal-dots">';
             if (hasRecord) dotsHtml += '<span class="cal-dot-feed"></span>';
+            if (hasSleep) dotsHtml += '<span class="cal-dot-sleep"></span>';
             if (hasVaccine) dotsHtml += '<span class="cal-dot-vaccine"></span>';
             if (hasHealthDone) dotsHtml += '<span class="cal-dot-health"></span>';
             if (hasHealthPlan) dotsHtml += '<span class="cal-dot-health-plan"></span>';
@@ -985,7 +962,11 @@ async function loadRecords(dateStr) {
 
     if (currentFilter === 'all' || (currentFilter !== 'vaccine' && currentFilter !== 'health' && currentFilter !== 'countdown')) {
         let url = `/api/records?date=${dateStr}`;
-        if (currentFilter !== 'all' && currentFilter !== 'vaccine' && currentFilter !== 'health' && currentFilter !== 'countdown') url += `&type=${currentFilter}`;
+        if (currentFilter !== 'all' && currentFilter !== 'vaccine' && currentFilter !== 'health' && currentFilter !== 'countdown' && currentFilter !== 'sleep') {
+            url += `&type=${currentFilter}`;
+        } else if (currentFilter === 'sleep') {
+            url += `&type=sleep`;
+        }
         promises.push(api(url).catch(() => []));
     } else {
         promises.push(Promise.resolve([]));
@@ -1016,26 +997,38 @@ function renderRecords(records, vaccineData, healthData, countdownList, dateStr)
 
     if (records && records.length > 0) {
         records.forEach(r => {
-            const badgeMap = { feed: 'badge-feed', excrete: 'badge-excrete', symptom: 'badge-symptom', supplement: 'badge-supplement' };
+            const badgeMap = { feed: 'badge-feed', excrete: 'badge-excrete', symptom: 'badge-symptom', supplement: 'badge-supplement', sleep: 'badge-sleep' };
             const typeClass = badgeMap[r.type] || 'badge-symptom';
-            const bgMap = { feed: 'bg-blue-500/10', excrete: 'bg-amber-500/10', symptom: 'bg-red-500/10', supplement: 'bg-purple-500/10' };
-            const iconMap = { feed: 'droplets', excrete: 'circle-dot', symptom: 'heart-pulse', supplement: 'pill' };
-            const colorMap = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400' };
+            const bgMap = { feed: 'bg-blue-500/10', excrete: 'bg-amber-500/10', symptom: 'bg-red-500/10', supplement: 'bg-purple-500/10', sleep: 'bg-indigo-500/10' };
+            const iconMap = { feed: 'droplets', excrete: 'circle-dot', symptom: 'heart-pulse', supplement: 'pill', sleep: 'moon' };
+            const colorMap = { feed: 'text-blue-400', excrete: 'text-amber-400', symptom: 'text-red-400', supplement: 'text-purple-400', sleep: 'text-indigo-400' };
 
             let detail = '';
             if (r.amount) detail += `${r.amount}ml`;
             if (r.duration) {
-                const mins = Math.floor(r.duration / 60);
-                const secs = r.duration % 60;
-                let durationStr = '';
-                if (mins > 0 && secs > 0) {
-                    durationStr = `${mins}分钟${secs}秒`;
-                } else if (mins > 0) {
-                    durationStr = `${mins}分钟`;
+                if (r.type === 'sleep') {
+                    const hours = Math.floor(r.duration / 60);
+                    const mins = r.duration % 60;
+                    if (hours > 0 && mins > 0) {
+                        detail += ` · ${hours}小时${mins}分钟`;
+                    } else if (hours > 0) {
+                        detail += ` · ${hours}小时`;
+                    } else {
+                        detail += ` · ${mins}分钟`;
+                    }
                 } else {
-                    durationStr = `${secs}秒`;
+                    const mins = Math.floor(r.duration / 60);
+                    const secs = r.duration % 60;
+                    let durationStr = '';
+                    if (mins > 0 && secs > 0) {
+                        durationStr = `${mins}分钟${secs}秒`;
+                    } else if (mins > 0) {
+                        durationStr = `${mins}分钟`;
+                    } else {
+                        durationStr = `${secs}秒`;
+                    }
+                    detail += ` · ${durationStr}`;
                 }
-                detail += ` · ${durationStr}`;
             }
             if (r.temperature) detail += ` · ${r.temperature}°C`;
             if (r.color) detail += ` · ${r.color}`;
@@ -1050,7 +1043,7 @@ function renderRecords(records, vaccineData, healthData, countdownList, dateStr)
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2">
                         <span class="text-sm text-text-primary">${esc(typeLabel(r.type, r.sub_type))}</span>
-                        <span class="text-xs px-1.5 py-0.5 rounded border ${typeClass}">${TYPE_LABELS[r.type]}</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded border ${typeClass}">${TYPE_LABELS[r.type] || '其他'}</span>
                     </div>
                     <p class="text-xs text-text-muted mt-0.5">${esc(detail || '--')}</p>
                 </div>
@@ -1147,7 +1140,6 @@ function renderRecords(records, vaccineData, healthData, countdownList, dateStr)
         }
     }
 
-    // 倒数日
     if (countdownList && countdownList.length > 0) {
         countdownList.forEach(c => {
             const daysLeft = c.days_left;
